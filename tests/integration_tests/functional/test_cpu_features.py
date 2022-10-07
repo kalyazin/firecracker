@@ -390,6 +390,12 @@ def _test_cpu_wrmsr_snapshot(context):
     )
     assert stderr.read() == ""
 
+    _, stdout, stderr = ssh_connection.execute_command(
+        "rdmsr 0x122"
+    )
+
+    print("rdmsr 0x122 (before)" + stdout.read() + stderr.read())
+
     # Dump MSR state to a file that will be published to S3 for the 2nd part of the test
     snapshot_artifacts_dir = os.path.join(
         shared_names["snapshot_artifacts_root_dir"],
@@ -677,6 +683,12 @@ def _test_cpu_wrmsr_restore(context):
     ssh_connection = net_tools.SSHConnection(vm.ssh_config)
 
     dump_msr_state_to_file(msrs_after_fname, ssh_connection, shared_names)
+
+    _, stdout, stderr = ssh_connection.execute_command(
+        "rdmsr 0x122"
+    )
+
+    print("rdmsr 0x122 (after)" + stdout.read() + stderr.read())
 
     # Compare the two lists of MSR values and assert they are equal
     check_msr_values_are_equal(
