@@ -202,6 +202,7 @@ def init_microvm(root_path, bin_cloner_path, fc_binary=None, jailer_binary=None)
         jailer_binary_path=jailer_binary,
         microvm_id=microvm_id,
         bin_cloner_path=bin_cloner_path,
+        monitor_memory=False,
     )
     vm.setup()
     return vm

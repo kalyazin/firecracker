@@ -6,12 +6,14 @@ import asyncio
 import asyncssh
 from nsenter import Namespace
 import socket
+import time
+import pytest
 
 from framework import decorators
 
 import host_tools.network as net_tools
 
-NO_OF_MICROVMS = 20
+NO_OF_MICROVMS = 48
 
 
 def set_up_event_loop():
@@ -24,28 +26,35 @@ def set_up_event_loop():
 
     return loop
 
+async def configure_and_run(microvm, network_info):
+    """Auxiliary function for configuring and running microVM."""
+    microvm.spawn(create_logger=False)
+
+    # Machine configuration specified in the SLA.
+    config = {"vcpu_count": 1, "mem_size_mib": 128}
+
+    microvm.basic_config(**config)
+
+    _tap, _, _ = microvm.ssh_network_config(
+        network_info["config"], network_info["iface_id"]
+    )
+
+    microvm.start()
+    return _tap
+
 async def connect(username, identity, sock):
     return await asyncssh.connect(
         username=username, known_hosts=None, connect_timeout=1, client_keys=[identity], sock=sock
     )
 
-async def run_cmd(conn, cmd):
+async def execute_command(conn, cmd):
     result = await conn.run(cmd)
     return result
 
-async def scp_file(conn, src, dst):
+async def push_file(conn, src, dst):
     await asyncssh.scp(src, (conn, dst))
 
-
-async def upload_and_run(ssh_conn, bin, cmd):
-    ssh_conn.scp_file("../resources/tests/fib.py", "./fib.py")
-    _, _, stderr = ssh_conn.execute_command(cmd)
-    return stderr
-
-async def run_ssh_cmd(ssh_conn, cmd):
-    _, _, stderr = ssh_conn.execute_command(cmd)
-    return stderr
-
+# @pytest.mark.timeout(20)
 @decorators.test_context("api", NO_OF_MICROVMS)
 def test_run_concurrency(test_multiple_microvms, network_config):
     """
@@ -60,10 +69,16 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     uvm_data = []
 
     # configure (can be merged)
+    cmds = []
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
-        _ = _configure_and_run(microvm, {"config": network_config, "iface_id": str(i)})
+        cmds.append(configure_and_run(microvm, {"config": network_config, "iface_id": str(i)}))
         # print(f"netns_file_path: {microvm.ssh_config['netns_file_path']}")
+
+    start = time.time()
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    end = time.time()
+    print(f"time config: {end - start}")
 
     # connect
     cmds = []
@@ -85,9 +100,12 @@ def test_run_concurrency(test_multiple_microvms, network_config):
             "sock": sock,
         })
 
+    start = time.time()
     results = loop.run_until_complete(asyncio.gather(*cmds))
     for i in range(NO_OF_MICROVMS):
         uvm_data[i]["assh_conn"] = results[i]
+    end = time.time()
+    print(f"time connect: {end - start}")
 
     """ cmds = []
     for i in range(NO_OF_MICROVMS):
@@ -97,48 +115,36 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     for r in results:
         print(r.stdout) """
 
+    # copy fib
     cmds = []
     for i in range(NO_OF_MICROVMS):
-        cmds.append(scp_file(uvm_data[i]["assh_conn"], "../resources/tests/fib.py", "./fib.py"))
+        cmds.append(push_file(uvm_data[i]["assh_conn"], "../resources/tests/fib.py", "./fib.py"))
 
+    start = time.time()
     _ = loop.run_until_complete(asyncio.gather(*cmds))
+    end = time.time()
+    print(f"time push: {end - start}")
 
+    # prewarn fib
     cmds = []
     for i in range(NO_OF_MICROVMS):
-        cmds.append(run_cmd(uvm_data[i]["assh_conn"], "python ./fib.py 35 > /dev/null"))
+        cmds.append(execute_command(uvm_data[i]["assh_conn"], "python ./fib.py 10"))
 
+    start = time.time()
     results = loop.run_until_complete(asyncio.gather(*cmds))
-    for r in results:
-        print(r.stdout)
+    """ for r in results:
+        print(r.stdout) """
+    end = time.time()
+    print(f"time prewarm: {end - start}")
 
+    # run fib
+    cmds = []
+    for i in range(NO_OF_MICROVMS):
+        cmds.append(execute_command(uvm_data[i]["assh_conn"], "python ./fib.py 36"))
 
-def _configure_and_run(microvm, network_info):
-    """Auxiliary function for configuring and running microVM."""
-    microvm.spawn()
-
-    # Machine configuration specified in the SLA.
-    config = {"vcpu_count": 1, "mem_size_mib": 128}
-
-    microvm.basic_config(**config)
-
-    _tap, _, _ = microvm.ssh_network_config(
-        network_info["config"], network_info["iface_id"]
-    )
-
-    microvm.start()
-    return _tap
-
-def import_key(identity_fname):
-    with open(identity_fname, "r") as f:
-        asyncssh.import_private_key(f.read())
-
-async def run_client(hostname, username, identity, ns, sock) -> None:
-    # with Namespace(ns, "net"):
-    """ async with asyncssh.connect(
-        hostname, username=username, known_hosts=None, connect_timeout=1, client_keys=[identity],
-    ) as conn: """
-    async with asyncssh.connect(
-        username=username, known_hosts=None, connect_timeout=1, client_keys=[identity], sock=sock
-    ) as conn:
-        result = await conn.run('ps', check=True)
-        print(result.stdout, end='')
+    start = time.time()
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    """ for r in results:
+        print(r.stdout) """
+    end = time.time()
+    print(f"time fib: {end - start}")
