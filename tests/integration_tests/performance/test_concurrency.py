@@ -54,21 +54,7 @@ async def execute_command(conn, cmd):
 async def push_file(conn, src, dst):
     await asyncssh.scp(src, (conn, dst))
 
-# @pytest.mark.timeout(20)
-@decorators.test_context("api", NO_OF_MICROVMS)
-def test_run_concurrency(test_multiple_microvms, network_config):
-    """
-    Check we can spawn multiple microvms.
-
-    @type: functional
-    """
-    loop = set_up_event_loop()
-
-    microvms = test_multiple_microvms
-
-    uvm_data = []
-
-    # configure (can be merged)
+def configure_microvms(microvms, loop, network_config):
     cmds = []
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
@@ -80,7 +66,7 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     end = time.time()
     print(f"time config: {end - start}")
 
-    # connect
+def connect_to_microvms(microvms, uvm_data, loop):
     cmds = []
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
@@ -107,15 +93,7 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     end = time.time()
     print(f"time connect: {end - start}")
 
-    """ cmds = []
-    for i in range(NO_OF_MICROVMS):
-        cmds.append(run_cmd(uvm_data[i]["assh_conn"], "ps"))
-
-    results = loop.run_until_complete(asyncio.gather(*cmds))
-    for r in results:
-        print(r.stdout) """
-
-    # copy fib
+def push_bin_to_microvms(uvm_data, loop):
     cmds = []
     for i in range(NO_OF_MICROVMS):
         cmds.append(push_file(uvm_data[i]["assh_conn"], "../resources/tests/fib.py", "./fib.py"))
@@ -125,26 +103,44 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     end = time.time()
     print(f"time push: {end - start}")
 
-    # prewarn fib
+def run_bin_on_microvms_dbg(uvm_data, loop):
     cmds = []
     for i in range(NO_OF_MICROVMS):
-        cmds.append(execute_command(uvm_data[i]["assh_conn"], "python ./fib.py 10"))
+        cmds.append(execute_command(uvm_data[i]["assh_conn"], "ps"))
+
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    for r in results:
+        print(r.stdout)
+
+def run_bin_on_microvms(uvm_data, loop, arg, log):
+    cmds = []
+    for i in range(NO_OF_MICROVMS):
+        cmds.append(execute_command(uvm_data[i]["assh_conn"], f"python ./fib.py {arg}"))
 
     start = time.time()
     results = loop.run_until_complete(asyncio.gather(*cmds))
     """ for r in results:
         print(r.stdout) """
     end = time.time()
-    print(f"time prewarm: {end - start}")
+    print(f"time {log}: {end - start}")
 
-    # run fib
-    cmds = []
-    for i in range(NO_OF_MICROVMS):
-        cmds.append(execute_command(uvm_data[i]["assh_conn"], "python ./fib.py 36"))
+# @pytest.mark.timeout(20)
+@decorators.test_context("api", NO_OF_MICROVMS)
+def test_run_concurrency(test_multiple_microvms, network_config):
+    """
+    Check we can spawn multiple microvms.
 
-    start = time.time()
-    results = loop.run_until_complete(asyncio.gather(*cmds))
-    """ for r in results:
-        print(r.stdout) """
-    end = time.time()
-    print(f"time fib: {end - start}")
+    @type: functional
+    """
+    loop = set_up_event_loop()
+
+    microvms = test_multiple_microvms
+
+    uvm_data = []
+
+    configure_microvms(microvms, loop, network_config)
+    connect_to_microvms(microvms, uvm_data, loop)
+    # run_bin_on_microvms_dbg(uvm_data, loop)
+    push_bin_to_microvms(uvm_data, loop)
+    run_bin_on_microvms(uvm_data, loop, 10, "prewarm")
+    run_bin_on_microvms(uvm_data, loop, 36, "fib")
