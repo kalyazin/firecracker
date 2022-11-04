@@ -5,7 +5,6 @@
 import asyncio
 import asyncssh
 from nsenter import Namespace
-import sys
 import socket
 
 from framework import decorators
@@ -25,6 +24,19 @@ def set_up_event_loop():
 
     return loop
 
+async def connect(username, identity, sock):
+    return await asyncssh.connect(
+        username=username, known_hosts=None, connect_timeout=1, client_keys=[identity], sock=sock
+    )
+
+async def run_cmd(conn, cmd):
+    result = await conn.run(cmd)
+    return result
+
+async def scp_file(conn, src, dst):
+    await asyncssh.scp(src, (conn, dst))
+
+
 async def upload_and_run(ssh_conn, bin, cmd):
     ssh_conn.scp_file("../resources/tests/fib.py", "./fib.py")
     _, _, stderr = ssh_conn.execute_command(cmd)
@@ -43,48 +55,61 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     """
     loop = set_up_event_loop()
 
-    cmds = []
-
     microvms = test_multiple_microvms
 
-    # import
+    uvm_data = []
+
+    # configure (can be merged)
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
         _ = _configure_and_run(microvm, {"config": network_config, "iface_id": str(i)})
-        print(f"netns_file_path: {microvm.ssh_config['netns_file_path']}")
-        # import_key(microvm.ssh_config['ssh_key_path'])
+        # print(f"netns_file_path: {microvm.ssh_config['netns_file_path']}")
 
+    # connect
+    cmds = []
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
-        # _ = _configure_and_run(microvm, {"config": network_config, "iface_id": str(i)})
-        # We check that the vm is running by testing that the ssh does
-        # not time out.
+
         ssh_conn = net_tools.SSHConnection(microvm.ssh_config)
 
         with Namespace(microvm.ssh_config['netns_file_path'], "net"):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((microvm.ssh_config['hostname'], 22));
-        cmds.append(run_client(
-            microvm.ssh_config['hostname'], microvm.ssh_config['username'],
-            microvm.ssh_config['ssh_key_path'], microvm.ssh_config['netns_file_path'],
+        cmds.append(connect(
+            microvm.ssh_config['username'],
+            microvm.ssh_config['ssh_key_path'],
             sock
         ))
 
-        """ cmds.append(run_ssh_cmd(ssh_conn, "/bin/ps")) """
-        """ print(f"username: {microvm.ssh_config['username']}")
-        print(f"hostname: {microvm.ssh_config['hostname']}")
-        print(f"ssh_key_path: {microvm.ssh_config['ssh_key_path']}") """
-        # cmds.append(upload_and_run(ssh_conn, "", "python ./fib.py 1 > /dev/null"))
+        uvm_data.append({
+            "sock": sock,
+        })
 
-    """ try:
-        asyncio.get_event_loop().run_until_complete(run_client())
-    except (OSError, asyncssh.Error) as exc:
-        sys.exit('SSH connection failed: ' + str(exc)) """
-    # ns = microvms[0].ssh_config['netns_file_path']
-    # with Namespace(ns, "net"):
     results = loop.run_until_complete(asyncio.gather(*cmds))
-    """ for result in results:
-        assert result.read() == "" """
+    for i in range(NO_OF_MICROVMS):
+        uvm_data[i]["assh_conn"] = results[i]
+
+    """ cmds = []
+    for i in range(NO_OF_MICROVMS):
+        cmds.append(run_cmd(uvm_data[i]["assh_conn"], "ps"))
+
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    for r in results:
+        print(r.stdout) """
+
+    cmds = []
+    for i in range(NO_OF_MICROVMS):
+        cmds.append(scp_file(uvm_data[i]["assh_conn"], "../resources/tests/fib.py", "./fib.py"))
+
+    _ = loop.run_until_complete(asyncio.gather(*cmds))
+
+    cmds = []
+    for i in range(NO_OF_MICROVMS):
+        cmds.append(run_cmd(uvm_data[i]["assh_conn"], "python ./fib.py 35 > /dev/null"))
+
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    for r in results:
+        print(r.stdout)
 
 
 def _configure_and_run(microvm, network_info):
