@@ -1174,7 +1174,7 @@ cmd_test() {
         -v /boot:/boot \
         ${ramdisk_args} \
         -- \
-        pytest "$@"
+        /bin/bash -c "pip3 install asyncssh && pytest -s integration_tests/performance/test_concurrency.py"
 
     ret=$?
 
