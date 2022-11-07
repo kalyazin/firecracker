@@ -124,18 +124,8 @@ def run_bin_on_microvms(uvm_data, loop, arg, log):
     end = time.time()
     print(f"time {log}: {end - start}")
 
-# @pytest.mark.timeout(20)
-@decorators.test_context("api", NO_OF_MICROVMS)
-def test_run_concurrency(test_multiple_microvms, network_config):
-    """
-    Check we can spawn multiple microvms.
-
-    @type: functional
-    """
-    loop = set_up_event_loop()
-
+def run_zip_case(test_multiple_microvms, network_config, loop):
     microvms = test_multiple_microvms
-
     uvm_data = []
 
     configure_microvms(microvms, loop, network_config)
@@ -144,3 +134,32 @@ def test_run_concurrency(test_multiple_microvms, network_config):
     push_bin_to_microvms(uvm_data, loop)
     run_bin_on_microvms(uvm_data, loop, 10, "prewarm")
     run_bin_on_microvms(uvm_data, loop, 36, "fib")
+
+def run_snap_case(microvm, network_config, loop):
+    uvm_data = []
+    microvms = []
+
+    vm_for_snapshot = microvm()
+    MicrovmImageS3Fetcher(_test_images_s3_bucket()).init_vm_resources("api", vm_for_snapshot)
+
+    # TODO: run one microvm (same as above)
+    # TODO: push_bin_to_microvm
+    # TODO: snapshot microvm
+    # TODO: create and restore microvms
+    connect_to_microvms(microvms, uvm_data, loop)
+    # run_bin_on_microvms_dbg(uvm_data, loop)
+    run_bin_on_microvms(uvm_data, loop, 10, "prewarm")
+    run_bin_on_microvms(uvm_data, loop, 36, "fib")
+
+# @pytest.mark.timeout(20)
+@decorators.test_context("api", NO_OF_MICROVMS)
+def test_run_concurrency(test_multiple_microvms, network_config, microvm):
+    """
+    Check we can spawn multiple microvms.
+
+    @type: functional
+    """
+    loop = set_up_event_loop()
+
+    run_zip_case(test_multiple_microvms, network_config, loop)
+    # run_snap_case(microvm, network_config, loop)
