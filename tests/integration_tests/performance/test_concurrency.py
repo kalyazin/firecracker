@@ -8,12 +8,26 @@ from nsenter import Namespace
 import socket
 import time
 import pytest
+import shutil
+import os
+from pathlib import Path
 
 from framework import decorators
+from framework.s3fetcher import MicrovmImageS3Fetcher
+from framework.artifacts import NetIfaceConfig
+from framework.artifacts import SnapshotMemBackendType
+from conftest import _test_images_s3_bucket
+from integration_tests.functional.test_uffd import spawn_pf_handler, SOCKET_PATH
 
 import host_tools.network as net_tools
 
 NO_OF_MICROVMS = 48
+NO_OF_FIB_PREWARM = 33
+NO_OF_FIB_RUN = 43
+
+mem_fname = "mem"
+vmstate_fname = "vmstate"
+shared_dir_name = "my_snapshot"
 
 
 def set_up_event_loop():
@@ -26,21 +40,35 @@ def set_up_event_loop():
 
     return loop
 
-async def configure_and_run(microvm, network_info):
+async def configure_and_run(microvm, network_info, run):
     """Auxiliary function for configuring and running microVM."""
     microvm.spawn(create_logger=False)
 
     # Machine configuration specified in the SLA.
-    config = {"vcpu_count": 1, "mem_size_mib": 128}
+    if (run):
+        config = {"vcpu_count": 1, "mem_size_mib": 128}
+        microvm.basic_config(**config)
 
-    microvm.basic_config(**config)
+        _tap, _, _ = microvm.ssh_network_config(
+            network_info["config"], network_info["iface_id"],
+            tapname="tap0"
+        )
+    else:
+        iface = NetIfaceConfig()
+        _tap = microvm.create_tap_and_ssh_config(
+            host_ip=iface.host_ip,
+            guest_ip=iface.guest_ip,
+            netmask_len=iface.netmask,
+            tapname=iface.tap_name,
+        )
 
-    _tap, _, _ = microvm.ssh_network_config(
-        network_info["config"], network_info["iface_id"]
-    )
+    if (run):
+        microvm.start()
 
-    microvm.start()
-    return _tap
+    if (run):
+        return _tap
+    else:
+        return None
 
 async def connect(username, identity, sock):
     return await asyncssh.connect(
@@ -54,11 +82,11 @@ async def execute_command(conn, cmd):
 async def push_file(conn, src, dst):
     await asyncssh.scp(src, (conn, dst))
 
-def configure_microvms(microvms, loop, network_config):
+def configure_microvms(microvms, loop, network_config, run):
     cmds = []
     for i in range(NO_OF_MICROVMS):
         microvm = microvms[i]
-        cmds.append(configure_and_run(microvm, {"config": network_config, "iface_id": str(i)}))
+        cmds.append(configure_and_run(microvm, {"config": network_config, "iface_id": str(i)}, run=run))
         # print(f"netns_file_path: {microvm.ssh_config['netns_file_path']}")
 
     start = time.time()
@@ -124,42 +152,178 @@ def run_bin_on_microvms(uvm_data, loop, arg, log):
     end = time.time()
     print(f"time {log}: {end - start}")
 
-def run_zip_case(test_multiple_microvms, network_config, loop):
-    microvms = test_multiple_microvms
-    uvm_data = []
-
-    configure_microvms(microvms, loop, network_config)
-    connect_to_microvms(microvms, uvm_data, loop)
-    # run_bin_on_microvms_dbg(uvm_data, loop)
-    push_bin_to_microvms(uvm_data, loop)
-    run_bin_on_microvms(uvm_data, loop, 10, "prewarm")
-    run_bin_on_microvms(uvm_data, loop, 36, "fib")
-
-def run_snap_case(microvm, network_config, loop):
-    uvm_data = []
-    microvms = []
-
-    vm_for_snapshot = microvm()
-    MicrovmImageS3Fetcher(_test_images_s3_bucket()).init_vm_resources("api", vm_for_snapshot)
-
-    # TODO: run one microvm (same as above)
-    # TODO: push_bin_to_microvm
-    # TODO: snapshot microvm
-    # TODO: create and restore microvms
-    connect_to_microvms(microvms, uvm_data, loop)
-    # run_bin_on_microvms_dbg(uvm_data, loop)
-    run_bin_on_microvms(uvm_data, loop, 10, "prewarm")
-    run_bin_on_microvms(uvm_data, loop, 36, "fib")
-
-# @pytest.mark.timeout(20)
+@pytest.mark.timeout(10 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
-def test_run_concurrency(test_multiple_microvms, network_config, microvm):
+@pytest.mark.skipif(True, reason="debug")
+def test_run_concurrency_zip(test_multiple_microvms, network_config):
     """
     Check we can spawn multiple microvms.
 
     @type: functional
     """
+    microvms = test_multiple_microvms
+    uvm_data = []
+
     loop = set_up_event_loop()
 
-    run_zip_case(test_multiple_microvms, network_config, loop)
-    # run_snap_case(microvm, network_config, loop)
+    configure_microvms(microvms, loop, network_config, run=True)
+    connect_to_microvms(microvms, uvm_data, loop)
+    # run_bin_on_microvms_dbg(uvm_data, loop)
+    push_bin_to_microvms(uvm_data, loop)
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+
+def create_snapshot(microvm, network_config):
+    loop = set_up_event_loop()
+
+    vm_for_snapshot = microvm
+    MicrovmImageS3Fetcher(_test_images_s3_bucket()).init_vm_resources("ubuntu", vm_for_snapshot)
+    loop.run_until_complete(asyncio.gather(configure_and_run(vm_for_snapshot, {"config": network_config, "iface_id": "0"}, run=True)))
+
+    ssh_conn = net_tools.SSHConnection(vm_for_snapshot.ssh_config)
+    ssh_conn.scp_file(
+        "../resources/tests/fib.py", "./fib.py"
+    )
+
+    vm_for_snapshot.pause_to_snapshot(
+        mem_file_path=mem_fname,
+        snapshot_path=vmstate_fname,
+        diff=False,
+    )
+
+    shutil.rmtree(shared_dir_name, ignore_errors=True)
+    os.makedirs(shared_dir_name)
+
+    chroot_dir = vm_for_snapshot.chroot()
+    shutil.copyfile(
+        Path(chroot_dir) / mem_fname,
+        Path(shared_dir_name) / mem_fname,
+    )
+    shutil.copyfile(
+        Path(chroot_dir) / vmstate_fname,
+        Path(shared_dir_name) / vmstate_fname,
+    )
+
+async def restore_microvm(microvm):
+    chroot_dir = microvm.chroot()
+    tmp_snapshot_dir = (
+        Path() / chroot_dir / "tmp"
+    )
+    os.makedirs(tmp_snapshot_dir)
+
+    mem_fname_in_jail = Path(tmp_snapshot_dir) / mem_fname
+    vmstate_fname_in_jail = (
+        Path(tmp_snapshot_dir) / vmstate_fname
+    )
+
+    shutil.copyfile(
+        Path(shared_dir_name) / mem_fname,
+        mem_fname_in_jail,
+    )
+    shutil.copyfile(
+        Path(shared_dir_name) / vmstate_fname,
+        vmstate_fname_in_jail,
+    )
+    
+    microvm.restore_from_snapshot(
+        snapshot_mem=mem_fname_in_jail,
+        snapshot_vmstate=vmstate_fname_in_jail,
+        snapshot_disks=[microvm.rootfs_file],
+        snapshot_is_diff=True,
+    )
+
+async def restore_microvm_uffd(microvm, uffd_handler_paths):
+    chroot_dir = microvm.chroot()
+    tmp_snapshot_dir = (
+        Path() / chroot_dir / "tmp"
+    )
+    os.makedirs(tmp_snapshot_dir)
+
+    mem_fname_in_jail = Path(tmp_snapshot_dir) / mem_fname
+    vmstate_fname_in_jail = (
+        Path(tmp_snapshot_dir) / vmstate_fname
+    )
+
+    shutil.copyfile(
+        Path(shared_dir_name) / mem_fname,
+        mem_fname_in_jail,
+    )
+    shutil.copyfile(
+        Path(shared_dir_name) / vmstate_fname,
+        vmstate_fname_in_jail,
+    )
+
+    jailed_vmstate = microvm.create_jailed_resource(vmstate_fname_in_jail)
+    microvm.create_jailed_resource(microvm.rootfs_file)
+
+    _pf_handler = spawn_pf_handler(
+        microvm, uffd_handler_paths["valid_handler"], mem_fname_in_jail
+    )
+
+    response = microvm.snapshot.load(
+        mem_backend={"type": SnapshotMemBackendType.UFFD, "path": SOCKET_PATH},
+        snapshot_path=jailed_vmstate,
+        diff=False,
+        resume=True,
+    )
+    print(response.text)
+    assert response.ok
+
+def restore_microvms(microvms, loop, uffd, uffd_handler_paths=None):
+    cmds = []
+    for i in range(NO_OF_MICROVMS):
+        if uffd:
+            cmds.append(restore_microvm_uffd(microvms[i], uffd_handler_paths=uffd_handler_paths))
+        else:
+            cmds.append(restore_microvm(microvms[i]))
+
+    start = time.time()
+    results = loop.run_until_complete(asyncio.gather(*cmds))
+    end = time.time()
+    print(f"time restore: {end - start}")
+    """ for r in results:
+        print(r.stdout) """
+
+@pytest.mark.timeout(10 * 60)
+@decorators.test_context("api", NO_OF_MICROVMS)
+@pytest.mark.skipif(True, reason="debug")
+def test_run_concurrency_snap(test_multiple_microvms, microvm, network_config):
+    """
+    Check we can spawn multiple microvms.
+
+    @type: functional
+    """
+    microvms = test_multiple_microvms
+    uvm_data = []
+
+    loop = set_up_event_loop()
+
+    create_snapshot(microvm, network_config)
+    configure_microvms(microvms, loop, network_config, run=False)
+    restore_microvms(microvms, loop, uffd=False)
+    connect_to_microvms(microvms, uvm_data, loop)
+    # run_bin_on_microvms_dbg(uvm_data, loop)
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+
+@pytest.mark.timeout(10 * 60)
+@decorators.test_context("api", NO_OF_MICROVMS)
+# @pytest.mark.skipif(True, reason="debug")
+def test_run_concurrency_snap_uffd(test_multiple_microvms, microvm, network_config, uffd_handler_paths):
+    """
+    Check we can spawn multiple microvms.
+
+    @type: functional
+    """
+    microvms = test_multiple_microvms
+    uvm_data = []
+
+    loop = set_up_event_loop()
+
+    create_snapshot(microvm, network_config)
+    configure_microvms(microvms, loop, network_config, run=False)
+    restore_microvms(microvms, loop, uffd=True, uffd_handler_paths=uffd_handler_paths)
+    connect_to_microvms(microvms, uvm_data, loop)
+    # run_bin_on_microvms_dbg(uvm_data, loop)
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
+    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
