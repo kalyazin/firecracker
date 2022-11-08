@@ -319,7 +319,7 @@ def run_stats(uvm_data, loop, num_runs):
 
     a = np.array(times)
     print(f"mean: {a.mean()}, std: {a.std()}")
-    print(f"P50: {np.percentile(a, 50)}, 90: {np.percentile(a, 90)}, P99: {np.percentile(a, 99)}")
+    print(f"P50: {np.percentile(a, 50)}, P90: {np.percentile(a, 90)}, P99: {np.percentile(a, 99)}")
 
 @pytest.mark.timeout(60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
