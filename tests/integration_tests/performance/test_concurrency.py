@@ -11,6 +11,7 @@ import pytest
 import shutil
 import os
 from pathlib import Path
+import numpy as np
 
 from framework import decorators
 from framework.s3fetcher import MicrovmImageS3Fetcher
@@ -22,8 +23,10 @@ from integration_tests.functional.test_uffd import spawn_pf_handler, SOCKET_PATH
 import host_tools.network as net_tools
 
 NO_OF_MICROVMS = 48
-NO_OF_FIB_PREWARM = 33
-NO_OF_FIB_RUN = 43
+NO_OF_RUNS = 10
+NO_OF_FIB_PREWARM = 10
+# NO_OF_FIB_RUN = 43 # about 165 sec
+NO_OF_FIB_RUN = 34 # about 2.2 sec
 
 mem_fname = "mem"
 vmstate_fname = "vmstate"
@@ -151,10 +154,11 @@ def run_bin_on_microvms(uvm_data, loop, arg, log):
         print(r.stdout) """
     end = time.time()
     print(f"time {log}: {end - start}")
+    return end - start
 
-@pytest.mark.timeout(10 * 60)
+@pytest.mark.timeout(60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
-@pytest.mark.skipif(True, reason="debug")
+# @pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_zip(test_multiple_microvms, network_config):
     """
     Check we can spawn multiple microvms.
@@ -171,7 +175,7 @@ def test_run_concurrency_zip(test_multiple_microvms, network_config):
     # run_bin_on_microvms_dbg(uvm_data, loop)
     push_bin_to_microvms(uvm_data, loop)
     run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
-    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+    run_stats(uvm_data, loop, NO_OF_RUNS)
 
 def create_snapshot(microvm, network_config):
     loop = set_up_event_loop()
@@ -284,7 +288,7 @@ def restore_microvms(microvms, loop, uffd, uffd_handler_paths=None):
     """ for r in results:
         print(r.stdout) """
 
-@pytest.mark.timeout(10 * 60)
+@pytest.mark.timeout(60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
 @pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_snap(test_multiple_microvms, microvm, network_config):
@@ -304,11 +308,22 @@ def test_run_concurrency_snap(test_multiple_microvms, microvm, network_config):
     connect_to_microvms(microvms, uvm_data, loop)
     # run_bin_on_microvms_dbg(uvm_data, loop)
     run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
-    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+    run_stats(uvm_data, loop, NO_OF_RUNS)
 
-@pytest.mark.timeout(10 * 60)
+def run_stats(uvm_data, loop, num_runs):
+    times = []
+
+    for i in range(num_runs):
+        res = run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+        times.append(res)
+
+    a = np.array(times)
+    print(f"mean: {a.mean()}, std: {a.std()}")
+    print(f"P50: {np.percentile(a, 50)}, 90: {np.percentile(a, 90)}, P99: {np.percentile(a, 99)}")
+
+@pytest.mark.timeout(60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
-# @pytest.mark.skipif(True, reason="debug")
+@pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_snap_uffd(test_multiple_microvms, microvm, network_config, uffd_handler_paths):
     """
     Check we can spawn multiple microvms.
@@ -326,4 +341,4 @@ def test_run_concurrency_snap_uffd(test_multiple_microvms, microvm, network_conf
     connect_to_microvms(microvms, uvm_data, loop)
     # run_bin_on_microvms_dbg(uvm_data, loop)
     run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_PREWARM, "prewarm")
-    run_bin_on_microvms(uvm_data, loop, NO_OF_FIB_RUN, "fib")
+    run_stats(uvm_data, loop, NO_OF_RUNS)
