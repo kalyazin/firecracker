@@ -23,7 +23,7 @@ from integration_tests.functional.test_uffd import spawn_pf_handler, SOCKET_PATH
 import host_tools.network as net_tools
 
 NO_OF_MICROVMS = 48
-NO_OF_RUNS = 10
+NO_OF_RUNS = 3 * 1000
 NO_OF_FIB_PREWARM = 10
 # NO_OF_FIB_RUN = 43 # about 165 sec
 NO_OF_FIB_RUN = 34 # about 2.2 sec
@@ -156,7 +156,7 @@ def run_bin_on_microvms(uvm_data, loop, arg, log):
     print(f"time {log}: {end - start}")
     return end - start
 
-@pytest.mark.timeout(60 * 60)
+@pytest.mark.timeout(3 * 60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
 # @pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_zip(test_multiple_microvms, network_config):
@@ -288,7 +288,7 @@ def restore_microvms(microvms, loop, uffd, uffd_handler_paths=None):
     """ for r in results:
         print(r.stdout) """
 
-@pytest.mark.timeout(60 * 60)
+@pytest.mark.timeout(3 * 60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
 @pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_snap(test_multiple_microvms, microvm, network_config):
@@ -321,7 +321,7 @@ def run_stats(uvm_data, loop, num_runs):
     print(f"mean: {a.mean()}, std: {a.std()}")
     print(f"P50: {np.percentile(a, 50)}, P90: {np.percentile(a, 90)}, P99: {np.percentile(a, 99)}")
 
-@pytest.mark.timeout(60 * 60)
+@pytest.mark.timeout(3 * 60 * 60)
 @decorators.test_context("api", NO_OF_MICROVMS)
 @pytest.mark.skipif(True, reason="debug")
 def test_run_concurrency_snap_uffd(test_multiple_microvms, microvm, network_config, uffd_handler_paths):
