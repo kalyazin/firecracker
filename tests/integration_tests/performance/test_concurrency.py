@@ -49,7 +49,7 @@ async def configure_and_run(microvm, network_info, run):
 
     # Machine configuration specified in the SLA.
     if (run):
-        config = {"vcpu_count": 1, "mem_size_mib": 128}
+        config = {"vcpu_count": 2, "mem_size_mib": 512}
         microvm.basic_config(**config)
 
         _tap, _, _ = microvm.ssh_network_config(
