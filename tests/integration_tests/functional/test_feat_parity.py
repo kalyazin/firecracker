@@ -19,6 +19,12 @@ INST_SET_TEMPLATES = ["T2A", "T2CL"]
 ARTIFACTS = ArtifactCollection(_test_images_s3_bucket())
 
 
+@pytest.fixture(scope="session")
+def vm_builder(bin_cloner_path):
+    """Retrun a Microvm builder."""
+    return MicrovmBuilder(bin_cloner_path)
+
+
 @pytest.fixture(
     name="microvm",
     params=ARTIFACTS.microvms(keyword="1vcpu_1024mb"),
@@ -61,13 +67,11 @@ def inst_set_cpu_template_ext_fxt(request):
     return request.param
 
 
-def create_vm(bin_cloner_path, cpu_template, microvm, kernel, disk):
+def create_vm(vm_builder, cpu_template, microvm, kernel, disk):
     """
     Create a VM.
     """
     root_disk = disk.copy()
-
-    vm_builder = MicrovmBuilder(bin_cloner_path)
     vm_instance = vm_builder.build(
         kernel=kernel,
         disks=[root_disk],
@@ -81,12 +85,12 @@ def create_vm(bin_cloner_path, cpu_template, microvm, kernel, disk):
 
 
 def check_cpuid_feat_flags(
-    bin_cloner_path, cpu_template, microvm, kernel, disk, must_be_set, must_be_unset
+    vm_builder, cpu_template, microvm, kernel, disk, must_be_set, must_be_unset
 ):
     """
     Check that CPUID feature flag are set and unset as expected.
     """
-    vm = create_vm(bin_cloner_path, cpu_template, microvm, kernel, disk)
+    vm = create_vm(vm_builder, cpu_template, microvm, kernel, disk)
     vm.start()
 
     cpuid = cpuid_utils.get_guest_cpuid(vm)
@@ -110,7 +114,7 @@ def check_cpuid_feat_flags(
 
 
 def test_feat_parity_cpuid_mpx(
-    bin_cloner_path, cpu_template, microvm, guest_kernel, disk
+    vm_builder, cpu_template, microvm, guest_kernel, disk
 ):
     """
     Verify that MPX (Memory Protection Extensions) is not enabled in any of the supported CPU templates.
@@ -127,7 +131,7 @@ def test_feat_parity_cpuid_mpx(
     # fmt: on
 
     check_cpuid_feat_flags(
-        bin_cloner_path,
+        vm_builder,
         cpu_template,
         microvm,
         guest_kernel,
@@ -138,7 +142,7 @@ def test_feat_parity_cpuid_mpx(
 
 
 def test_feat_parity_cpuid_inst_set(
-    bin_cloner_path, inst_set_cpu_template_ext, microvm, guest_kernel, disk
+    vm_builder, inst_set_cpu_template_ext, microvm, guest_kernel, disk
 ):
     """
     Verify that CPUID feature flags related to instruction sets are properly set
@@ -211,7 +215,7 @@ def test_feat_parity_cpuid_inst_set(
     # fmt: on
 
     check_cpuid_feat_flags(
-        bin_cloner_path,
+        vm_builder,
         inst_set_cpu_template_ext,
         microvm,
         guest_kernel,
@@ -222,7 +226,7 @@ def test_feat_parity_cpuid_inst_set(
 
 
 def test_feat_parity_cpuid_sec(
-    bin_cloner_path, inst_set_cpu_template, microvm, guest_kernel, disk
+    vm_builder, inst_set_cpu_template, microvm, guest_kernel, disk
 ):
     """
     Verify that security-related CPUID feature flags are properly set
@@ -299,7 +303,7 @@ def test_feat_parity_cpuid_sec(
         raise Exception("Unsupported CPU vendor.")
 
     check_cpuid_feat_flags(
-        bin_cloner_path,
+        vm_builder,
         inst_set_cpu_template,
         microvm,
         guest_kernel,
@@ -310,14 +314,14 @@ def test_feat_parity_cpuid_sec(
 
 
 def test_feat_parity_msr_arch_cap(
-    bin_cloner_path, inst_set_cpu_template, microvm, guest_kernel, disk
+    vm_builder, inst_set_cpu_template, microvm, guest_kernel, disk
 ):
     """
     Verify availability and value of the IA32_ARCH_CAPABILITIES MSR for T2CL and T2A CPU templates.
 
     @type: functional
     """
-    vm = create_vm(bin_cloner_path, inst_set_cpu_template, microvm, guest_kernel, disk)
+    vm = create_vm(vm_builder, inst_set_cpu_template, microvm, guest_kernel, disk)
     vm.start()
 
     ssh_conn = net_tools.SSHConnection(vm.ssh_config)
