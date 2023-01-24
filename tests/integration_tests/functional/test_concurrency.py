@@ -3,11 +3,13 @@
 """Ensure multiple microVMs work correctly when spawned simultaneously."""
 
 import host_tools.network as net_tools
+import pytest
 
-NO_OF_MICROVMS = 20
+NO_OF_MICROVMS = 2 * 20
 
 
-def test_run_concurrency(microvm_factory, network_config, guest_kernel, rootfs):
+@pytest.mark.parametrize('iteration', range(5))
+def test_run_concurrency(microvm_factory, network_config, guest_kernel, rootfs, iteration):
     """
     Check we can spawn multiple microvms.
 
