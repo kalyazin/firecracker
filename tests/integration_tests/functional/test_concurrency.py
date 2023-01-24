@@ -5,7 +5,7 @@
 import host_tools.network as net_tools
 import pytest
 
-NO_OF_MICROVMS = 4 * 20
+NO_OF_MICROVMS = 64
 
 
 @pytest.mark.parametrize('iteration', range(5))
