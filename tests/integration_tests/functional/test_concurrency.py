@@ -8,7 +8,7 @@ import pytest
 NO_OF_MICROVMS = 64
 
 
-@pytest.mark.parametrize('iteration', range(5))
+@pytest.mark.parametrize('iteration', range(20))
 def test_run_concurrency(microvm_factory, network_config, guest_kernel, rootfs, iteration):
     """
     Check we can spawn multiple microvms.
