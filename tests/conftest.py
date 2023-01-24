@@ -474,6 +474,7 @@ def microvm_factory(tmp_path, bin_cloner_path):
             """Clean up all built VMs"""
             for vm in self.vms:
                 vm.kill()
+            shutil.rmtree(tmp_path)
 
     uvm_factory = MicroVMFactory(tmp_path, bin_cloner_path)
     yield uvm_factory
