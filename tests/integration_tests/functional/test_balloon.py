@@ -588,6 +588,7 @@ def _test_balloon_snapshot(context):
     # Now inflate the balloon with 20MB of pages.
     response = basevm.balloon.patch(amount_mib=20)
     assert basevm.api_session.is_status_no_content(response.status_code)
+    time.sleep(1)
 
     # Check memory usage again.
     second_reading = get_stable_rss_mem_by_pid(firecracker_pid)
