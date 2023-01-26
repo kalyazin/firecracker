@@ -16,6 +16,8 @@ from framework.utils import get_free_mem_ssh, run_cmd
 
 import host_tools.network as net_tools  # pylint: disable=import-error
 
+import pytest
+
 
 MB_TO_PAGES = 256
 DFLT_STATS_POLLING_INTERVAL_S = 1
@@ -529,7 +531,8 @@ def test_stats_update(test_microvm_with_api, network_config):
     assert next_stats["available_memory"] != final_stats["available_memory"]
 
 
-def test_balloon_snapshot(network_config, bin_cloner_path):
+@pytest.mark.parametrize("iteration", range(100))
+def test_balloon_snapshot(network_config, bin_cloner_path, iteration):
     """
     Test that the balloon works after pause/resume.
 
