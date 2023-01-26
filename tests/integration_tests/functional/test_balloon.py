@@ -589,7 +589,7 @@ def _test_balloon_snapshot(context):
 
     # Dirty 60MB of pages.
     make_guest_dirty_memory(ssh_connection, amount=(60 * MB_TO_PAGES))
-    #time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
 
     # Get the firecracker pid, and open an ssh connection.
     firecracker_pid = basevm.jailer_clone_pid
@@ -600,7 +600,7 @@ def _test_balloon_snapshot(context):
     # Now inflate the balloon with 20MB of pages.
     response = basevm.balloon.patch(amount_mib=20)
     assert basevm.api_session.is_status_no_content(response.status_code)
-    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
+    #time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
 
     # Check memory usage again.
     second_reading = get_stable_rss_mem_by_pid(firecracker_pid)
@@ -628,6 +628,7 @@ def _test_balloon_snapshot(context):
     # Get the firecracker from snapshot pid, and open an ssh connection.
     firecracker_pid = microvm.jailer_clone_pid
 
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
     # Get the stats right after we take a snapshot.
     stats_after_snap = microvm.balloon.get_stats().json()
 
