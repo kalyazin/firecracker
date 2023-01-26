@@ -586,7 +586,7 @@ def _test_balloon_snapshot(context):
 
     # Dirty 60MB of pages.
     make_guest_dirty_memory(ssh_connection, amount=(60 * MB_TO_PAGES))
-    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
+    #time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
 
     # Get the firecracker pid, and open an ssh connection.
     firecracker_pid = basevm.jailer_clone_pid
