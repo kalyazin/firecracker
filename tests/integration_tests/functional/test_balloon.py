@@ -18,6 +18,7 @@ import host_tools.network as net_tools  # pylint: disable=import-error
 
 
 MB_TO_PAGES = 256
+DFLT_STATS_POLLING_INTERVAL_S = 1
 
 
 @retry(delay=0.5, tries=10)
@@ -167,7 +168,9 @@ def test_inflate_reduces_free(test_microvm_with_api, network_config):
 
     # Install deflated balloon.
     response = test_microvm.balloon.put(
-        amount_mib=0, deflate_on_oom=False, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=False,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -414,7 +417,9 @@ def test_stats(test_microvm_with_api, network_config):
 
     # Add a memory balloon with stats enabled.
     response = test_microvm.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=True,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -430,7 +435,7 @@ def test_stats(test_microvm_with_api, network_config):
 
     # Dirty 10MB of pages.
     make_guest_dirty_memory(ssh_connection, amount=(10 * MB_TO_PAGES))
-    time.sleep(1)
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
     # This call will internally wait for rss to become stable.
     _ = get_stable_rss_mem_by_pid(firecracker_pid)
 
@@ -480,7 +485,9 @@ def test_stats_update(test_microvm_with_api, network_config):
 
     # Add a memory balloon with stats enabled.
     response = test_microvm.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=True,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -505,7 +512,7 @@ def test_stats_update(test_microvm_with_api, network_config):
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
     # Wait out the polling interval, then get the updated stats.
-    time.sleep(1)
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
     next_stats = test_microvm.balloon.get_stats().json()
     assert initial_stats["available_memory"] != next_stats["available_memory"]
 
@@ -568,7 +575,9 @@ def _test_balloon_snapshot(context):
 
     # Add a memory balloon with stats enabled.
     response = basevm.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=True,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert basevm.api_session.is_status_no_content(response.status_code)
 
@@ -577,7 +586,7 @@ def _test_balloon_snapshot(context):
 
     # Dirty 60MB of pages.
     make_guest_dirty_memory(ssh_connection, amount=(60 * MB_TO_PAGES))
-    time.sleep(1)
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
 
     # Get the firecracker pid, and open an ssh connection.
     firecracker_pid = basevm.jailer_clone_pid
@@ -588,7 +597,7 @@ def _test_balloon_snapshot(context):
     # Now inflate the balloon with 20MB of pages.
     response = basevm.balloon.patch(amount_mib=20)
     assert basevm.api_session.is_status_no_content(response.status_code)
-    time.sleep(1)
+    time.sleep(DFLT_STATS_POLLING_INTERVAL_S)
 
     # Check memory usage again.
     second_reading = get_stable_rss_mem_by_pid(firecracker_pid)
@@ -695,7 +704,9 @@ def _test_snapshot_compatibility(context):
     microvm = vm_instance.vm
     # Add a memory balloon with stats enabled.
     response = microvm.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=True,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert microvm.api_session.is_status_no_content(response.status_code)
 
@@ -762,7 +773,9 @@ def _test_memory_scrub(context):
 
     # Add a memory balloon with stats enabled.
     response = microvm.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=1
+        amount_mib=0,
+        deflate_on_oom=True,
+        stats_polling_interval_s=DFLT_STATS_POLLING_INTERVAL_S,
     )
     assert microvm.api_session.is_status_no_content(response.status_code)
 
