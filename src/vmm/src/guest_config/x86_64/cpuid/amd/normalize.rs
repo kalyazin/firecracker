@@ -183,7 +183,7 @@ impl super::AmdCpuid {
                 // 1Fh-04h Reserved.
                 // ```
                 //
-                // cache_type: 0..4,
+                // cache_type: 0..5,
                 let cache_type = result.eax & 15;
                 if cache_type == 0 {
                     break;
