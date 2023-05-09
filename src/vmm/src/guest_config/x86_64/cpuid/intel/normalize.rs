@@ -108,15 +108,8 @@ impl super::IntelCpuid {
                     break;
                 }
 
-                // Cache Type Field.
-                // - 0 = Null - No more caches.
-                // - 1 = Data Cache.
-                // - 2 = Instruction Cache.
-                // - 3 = Unified Cache.
-                // - 4-31 = Reserved.
-                //
-                // cache_type_field: 0..5,
-                let cache_level = subleaf.result.eax & 15;
+                // cache_level_field: 5..8,
+                let cache_level = subleaf.result.eax & (0x7 << 5);
 
                 // Maximum number of addressable IDs for logical processors sharing this cache.
                 // - Add one to the return value to get the result.
