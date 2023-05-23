@@ -443,10 +443,8 @@ impl super::Cpuid {
         let guest_leaf_0x80000006 = self
             .get_mut(&CpuidKey::leaf(0x80000006))
             .ok_or(ExtendedCacheFeaturesError::MissingLeaf0x80000006)?;
-        guest_leaf_0x80000006.result.eax = cpuid(0x80000006).eax;
-        guest_leaf_0x80000006.result.ebx = cpuid(0x80000006).ebx;
-        guest_leaf_0x80000006.result.ecx = cpuid(0x80000006).ecx;
-        guest_leaf_0x80000006.result.edx = cpuid(0x80000006).edx & !0x00030000;
+        guest_leaf_0x80000006.result = cpuid(0x80000006).into();
+        guest_leaf_0x80000006.result.edx &= !0x30000;
         Ok(())
     }
 }
