@@ -43,7 +43,7 @@ use crate::devices::legacy::serial::SerialOut;
 #[cfg(target_arch = "aarch64")]
 use crate::devices::legacy::RTCDevice;
 use crate::devices::legacy::{EventFdTrigger, SerialEventsWrapper, SerialWrapper};
-use crate::devices::virtio::file::Block;
+use crate::devices::virtio::file::BlockFile;
 use crate::devices::virtio::{
     Balloon, Entropy, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend,
 };
@@ -954,7 +954,7 @@ fn attach_entropy_device(
     attach_virtio_device(event_manager, vmm, id, entropy_device.clone(), cmdline)
 }
 
-fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Block>>> + Debug>(
+fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<BlockFile>>> + Debug>(
     vmm: &mut Vmm,
     cmdline: &mut LoaderKernelCmdline,
     blocks: I,
@@ -1047,7 +1047,7 @@ pub mod tests {
     use crate::devices::virtio::rng::device::ENTROPY_DEV_ID;
     use crate::devices::virtio::vsock::VSOCK_DEV_ID;
     use crate::devices::virtio::{
-        SUBTYPE_BALLOON, SUBTYPE_BLOCK, SUBTYPE_NON_VIRTIO, SUBTYPE_RNG, SUBTYPE_VSOCK,
+        SUBTYPE_BALLOON, SUBTYPE_BLOCK_FILE, SUBTYPE_NON_VIRTIO, SUBTYPE_RNG, SUBTYPE_VSOCK,
         TYPE_BALLOON, TYPE_BLOCK, TYPE_RNG, TYPE_VSOCK,
     };
     use crate::vmm_config::balloon::{BalloonBuilder, BalloonDeviceConfig, BALLOON_DEV_ID};
@@ -1455,7 +1455,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
@@ -1479,7 +1479,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
@@ -1504,7 +1504,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
@@ -1542,15 +1542,19 @@ pub mod tests {
             assert!(cmdline_contains(&cmdline, "root=PARTUUID=0eaa91a0-01 rw"));
             assert!(vmm
                 .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), SUBTYPE_BLOCK, "root")
+                .get_device(DeviceType::Virtio(TYPE_BLOCK), SUBTYPE_BLOCK_FILE, "root")
                 .is_some());
             assert!(vmm
                 .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), SUBTYPE_BLOCK, "secondary")
+                .get_device(
+                    DeviceType::Virtio(TYPE_BLOCK),
+                    SUBTYPE_BLOCK_FILE,
+                    "secondary"
+                )
                 .is_some());
             assert!(vmm
                 .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), SUBTYPE_BLOCK, "third")
+                .get_device(DeviceType::Virtio(TYPE_BLOCK), SUBTYPE_BLOCK_FILE, "third")
                 .is_some());
 
             // Check if these three block devices are inserted in kernel_cmdline.
@@ -1580,7 +1584,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
@@ -1604,7 +1608,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
@@ -1628,7 +1632,7 @@ pub mod tests {
                 .mmio_device_manager
                 .get_device(
                     DeviceType::Virtio(TYPE_BLOCK),
-                    SUBTYPE_BLOCK,
+                    SUBTYPE_BLOCK_FILE,
                     drive_id.as_str()
                 )
                 .is_some());
