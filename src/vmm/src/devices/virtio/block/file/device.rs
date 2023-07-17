@@ -27,7 +27,9 @@ use virtio_gen::virtio_blk::{
 };
 use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
-use super::super::super::{ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BLOCK, TYPE_BLOCK};
+use super::super::super::{
+    ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BLOCK, TYPE_BLOCK,
+};
 use super::io::async_io;
 use super::request::*;
 use super::{
@@ -193,7 +195,7 @@ impl DiskProperties {
 
 /// Virtio device for exposing block level read/write operations on a host file.
 #[derive(Debug)]
-pub struct Block {
+pub struct BlockFile {
     // Host file and properties.
     pub(crate) disk: DiskProperties,
 
@@ -229,7 +231,7 @@ macro_rules! unwrap_async_file_engine_or_return {
     };
 }
 
-impl Block {
+impl BlockFile {
     /// Create a new virtio block device that operates on the given file.
     ///
     /// The given file must be seekable and sizable.
@@ -243,7 +245,7 @@ impl Block {
         is_disk_root: bool,
         rate_limiter: RateLimiter,
         file_engine_type: FileEngineType,
-    ) -> Result<Block, BlockError> {
+    ) -> Result<BlockFile, BlockError> {
         let disk_properties = DiskProperties::new(
             disk_image_path,
             is_disk_read_only,
@@ -265,7 +267,7 @@ impl Block {
 
         let queues = BLOCK_QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
 
-        Ok(Block {
+        Ok(BlockFile {
             id,
             root_device: is_disk_root,
             partuuid,
@@ -529,7 +531,7 @@ impl Block {
     }
 }
 
-impl VirtioDevice for Block {
+impl VirtioDevice for BlockFile {
     fn avail_features(&self) -> u64 {
         self.avail_features
     }
@@ -621,7 +623,7 @@ impl VirtioDevice for Block {
     }
 }
 
-impl Drop for Block {
+impl Drop for BlockFile {
     fn drop(&mut self) {
         match self.disk.cache_type {
             CacheType::Unsafe => {
@@ -657,7 +659,9 @@ mod tests {
         simulate_queue_and_async_completion_events, simulate_queue_event,
     };
     use crate::devices::virtio::test_utils::{default_mem, VirtQueue};
-    use crate::devices::virtio::{file::IO_URING_NUM_ENTRIES, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+    use crate::devices::virtio::{
+        file::IO_URING_NUM_ENTRIES, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    };
 
     #[test]
     fn test_disk_backing_file_helper() {
@@ -1374,7 +1378,7 @@ mod tests {
         }
     }
 
-    fn add_flush_requests_batch(block: &mut Block, vq: &VirtQueue, count: u16) {
+    fn add_flush_requests_batch(block: &mut BlockFile, vq: &VirtQueue, count: u16) {
         let mem = vq.memory();
         vq.avail.idx.set(0);
         vq.used.idx.set(0);

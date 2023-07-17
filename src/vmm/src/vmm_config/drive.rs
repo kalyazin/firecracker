@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::RateLimiterConfig;
 pub use crate::devices::virtio::block::file::device::FileEngineType;
 use crate::devices::virtio::block::file::BlockError;
-use crate::devices::virtio::file::Block;
+use crate::devices::virtio::file::BlockFile;
 pub use crate::devices::virtio::file::CacheType;
 use crate::VmmError;
 
@@ -67,8 +67,8 @@ pub struct BlockDeviceConfig {
     pub file_engine_type: FileEngineType,
 }
 
-impl From<&Block> for BlockDeviceConfig {
-    fn from(block: &Block) -> Self {
+impl From<&BlockFile> for BlockDeviceConfig {
+    fn from(block: &BlockFile) -> Self {
         let rl: RateLimiterConfig = block.rate_limiter().into();
         BlockDeviceConfig {
             drive_id: block.id().clone(),
@@ -104,14 +104,14 @@ pub struct BlockBuilder {
     // Root Device should be the first in the list whether or not PARTUUID is
     // specified in order to avoid bugs in case of switching from partuuid boot
     // scenarios to /dev/vda boot type.
-    pub list: VecDeque<Arc<Mutex<Block>>>,
+    pub list: VecDeque<Arc<Mutex<BlockFile>>>,
 }
 
 impl BlockBuilder {
     /// Constructor for BlockDevices. It initializes an empty LinkedList.
     pub fn new() -> Self {
         Self {
-            list: VecDeque::<Arc<Mutex<Block>>>::new(),
+            list: VecDeque::<Arc<Mutex<BlockFile>>>::new(),
         }
     }
 
@@ -133,7 +133,7 @@ impl BlockBuilder {
     }
 
     /// Inserts an existing block device.
-    pub fn add_device(&mut self, block_device: Arc<Mutex<Block>>) {
+    pub fn add_device(&mut self, block_device: Arc<Mutex<BlockFile>>) {
         if block_device.lock().expect("Poisoned lock").is_root_device() {
             self.list.push_front(block_device);
         } else {
@@ -181,7 +181,7 @@ impl BlockBuilder {
     }
 
     /// Creates a Block device from a BlockDeviceConfig.
-    fn create_block(block_device_config: BlockDeviceConfig) -> Result<Block, DriveError> {
+    fn create_block(block_device_config: BlockDeviceConfig) -> Result<BlockFile, DriveError> {
         // check if the path exists
         let path_on_host = PathBuf::from(&block_device_config.path_on_host);
         if !path_on_host.exists() {
@@ -197,7 +197,7 @@ impl BlockBuilder {
             .map_err(DriveError::CreateRateLimiter)?;
 
         // Create and return the Block device
-        Block::new(
+        BlockFile::new(
             block_device_config.drive_id,
             block_device_config.partuuid,
             block_device_config.cache_type,
@@ -617,7 +617,7 @@ mod tests {
         let mut block_devs = BlockBuilder::new();
         let backing_file = TempFile::new().unwrap();
         let block_id = "test_id";
-        let block = Block::new(
+        let block = BlockFile::new(
             block_id.to_string(),
             None,
             CacheType::default(),

@@ -22,7 +22,7 @@ use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
 use crate::devices::virtio::balloon::{Balloon, BalloonError};
 use crate::devices::virtio::block::file::persist::{BlockConstructorArgs, BlockState};
-use crate::devices::virtio::block::file::{Block, BlockError};
+use crate::devices::virtio::block::file::{BlockError, BlockFile};
 use crate::devices::virtio::net::persist::{
     NetConstructorArgs, NetPersistError as NetError, NetState,
 };
@@ -194,7 +194,7 @@ pub struct DeviceStates {
 /// from a snapshot.
 #[derive(Debug)]
 pub enum SharedDeviceType {
-    Block(Arc<Mutex<Block>>),
+    Block(Arc<Mutex<BlockFile>>),
     Network(Arc<Mutex<Net>>),
     Balloon(Arc<Mutex<Balloon>>),
     Vsock(Arc<Mutex<Vsock<VsockUnixBackend>>>),
@@ -317,7 +317,10 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                     },
                     TYPE_BLOCK => match locked_device.device_subtype() {
                         SUBTYPE_BLOCK => {
-                            let block = locked_device.as_mut_any().downcast_mut::<Block>().unwrap();
+                            let block = locked_device
+                                .as_mut_any()
+                                .downcast_mut::<BlockFile>()
+                                .unwrap();
                             block.prepare_save();
                             states.block_devices.push(ConnectedBlockState {
                                 device_id: devid.clone(),
@@ -526,7 +529,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
         }
 
         for block_state in &state.block_devices {
-            let device = Arc::new(Mutex::new(Block::restore(
+            let device = Arc::new(Mutex::new(BlockFile::restore(
                 BlockConstructorArgs { mem: mem.clone() },
                 &block_state.device_state,
             )?));

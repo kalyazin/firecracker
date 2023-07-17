@@ -117,7 +117,7 @@ pub struct BlockConstructorArgs {
     pub mem: GuestMemoryMmap,
 }
 
-impl Persist<'_> for Block {
+impl Persist<'_> for BlockFile {
     type State = BlockState;
     type ConstructorArgs = BlockConstructorArgs;
     type Error = BlockError;
@@ -144,7 +144,7 @@ impl Persist<'_> for Block {
         let rate_limiter =
             RateLimiter::restore((), &state.rate_limiter_state).map_err(BlockError::RateLimiter)?;
 
-        let mut block = Block::new(
+        let mut block = BlockFile::new(
             state.id.clone(),
             state.partuuid.clone(),
             state.cache_type.into(),
@@ -165,7 +165,7 @@ impl Persist<'_> for Block {
 
                 let rate_limiter = RateLimiter::restore((), &state.rate_limiter_state)
                     .map_err(BlockError::RateLimiter)?;
-                Block::new(
+                BlockFile::new(
                     state.id.clone(),
                     state.partuuid.clone(),
                     state.cache_type.into(),
@@ -248,7 +248,7 @@ mod tests {
         f.as_file().set_len(0x1000).unwrap();
 
         let id = "test".to_string();
-        let block = Block::new(
+        let block = BlockFile::new(
             id,
             None,
             CacheType::Writeback,
@@ -264,11 +264,11 @@ mod tests {
         let mut mem = vec![0; 4096];
         let version_map = VersionMap::new();
 
-        assert!(<Block as Persist>::save(&block)
+        assert!(<BlockFile as Persist>::save(&block)
             .serialize(&mut mem.as_mut_slice(), &version_map, 2)
             .is_ok());
 
-        assert!(<Block as Persist>::save(&block)
+        assert!(<BlockFile as Persist>::save(&block)
             .serialize(&mut mem.as_mut_slice(), &version_map, 3)
             .is_ok());
     }
@@ -300,7 +300,7 @@ mod tests {
             // Test what happens when restoring an Async engine on a kernel that does not support
             // it.
 
-            let block = Block::new(
+            let block = BlockFile::new(
                 "test".to_string(),
                 None,
                 CacheType::Unsafe,
@@ -317,7 +317,7 @@ mod tests {
             // Save the block device.
             let mut mem = vec![0; 4096];
 
-            let mut block_state = <Block as Persist>::save(&block);
+            let mut block_state = <BlockFile as Persist>::save(&block);
             // Overwrite the engine type state with Async.
             block_state.file_engine_type = FileEngineTypeState::Async;
 
@@ -326,7 +326,7 @@ mod tests {
                 .unwrap();
 
             // Restore the block device.
-            let restored_block = Block::restore(
+            let restored_block = BlockFile::restore(
                 BlockConstructorArgs { mem: default_mem() },
                 &BlockState::deserialize(&mut mem.as_slice(), &version_map, 2).unwrap(),
             )
@@ -345,7 +345,7 @@ mod tests {
         f.as_file().set_len(0x1000).unwrap();
 
         let id = "test".to_string();
-        let block = Block::new(
+        let block = BlockFile::new(
             id,
             None,
             CacheType::Unsafe,
@@ -362,12 +362,12 @@ mod tests {
         let mut mem = vec![0; 4096];
         let version_map = VersionMap::new();
 
-        <Block as Persist>::save(&block)
+        <BlockFile as Persist>::save(&block)
             .serialize(&mut mem.as_mut_slice(), &version_map, 1)
             .unwrap();
 
         // Restore the block device.
-        let restored_block = Block::restore(
+        let restored_block = BlockFile::restore(
             BlockConstructorArgs { mem: guest_mem },
             &BlockState::deserialize(&mut mem.as_slice(), &version_map, 1).unwrap(),
         )

@@ -218,7 +218,7 @@ mod tests {
     use crate::devices::virtio::block::file::test_utils::default_block_with_path;
     use crate::devices::virtio::mmio::tests::DummyDevice;
     use crate::devices::virtio::test_utils::default_mem;
-    use crate::devices::virtio::{net, file::Block, Net, Vsock, VsockUnixBackend};
+    use crate::devices::virtio::{file::BlockFile, net, Net, Vsock, VsockUnixBackend};
 
     const DEFAULT_QUEUE_MAX_SIZE: u16 = 256;
     impl Default for QueueState {
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(restored_mmio_transport, mmio_transport);
     }
 
-    fn default_block() -> (MmioTransport, GuestMemoryMmap, Arc<Mutex<Block>>) {
+    fn default_block() -> (MmioTransport, GuestMemoryMmap, Arc<Mutex<BlockFile>>) {
         let mem = default_mem();
 
         // Create backing file.

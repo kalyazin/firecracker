@@ -87,7 +87,7 @@ use crate::device_manager::mmio::MMIODeviceManager;
 use crate::devices::legacy::{IER_RDA_BIT, IER_RDA_OFFSET};
 use crate::devices::virtio::balloon::BalloonError;
 use crate::devices::virtio::{
-    Balloon, BalloonConfig, BalloonStats, file::Block, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
+    file::BlockFile, Balloon, BalloonConfig, BalloonStats, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
     SUBTYPE_BLOCK, SUBTYPE_NET, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
 };
 use crate::memory_snapshot::SnapshotMemory;
@@ -665,11 +665,16 @@ impl Vmm {
         path_on_host: String,
     ) -> Result<(), VmmError> {
         self.mmio_device_manager
-            .with_virtio_device_with_id(TYPE_BLOCK, SUBTYPE_BLOCK, drive_id, |block: &mut Block| {
-                block
-                    .update_disk_image(path_on_host)
-                    .map_err(|err| format!("{:?}", err))
-            })
+            .with_virtio_device_with_id(
+                TYPE_BLOCK,
+                SUBTYPE_BLOCK,
+                drive_id,
+                |block: &mut BlockFile| {
+                    block
+                        .update_disk_image(path_on_host)
+                        .map_err(|err| format!("{:?}", err))
+                },
+            )
             .map_err(VmmError::DeviceManager)
     }
 
@@ -681,10 +686,15 @@ impl Vmm {
         rl_ops: BucketUpdate,
     ) -> Result<(), VmmError> {
         self.mmio_device_manager
-            .with_virtio_device_with_id(TYPE_BLOCK, SUBTYPE_BLOCK, drive_id, |block: &mut Block| {
-                block.update_rate_limiter(rl_bytes, rl_ops);
-                Ok(())
-            })
+            .with_virtio_device_with_id(
+                TYPE_BLOCK,
+                SUBTYPE_BLOCK,
+                drive_id,
+                |block: &mut BlockFile| {
+                    block.update_rate_limiter(rl_bytes, rl_ops);
+                    Ok(())
+                },
+            )
             .map_err(VmmError::DeviceManager)
     }
 

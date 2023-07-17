@@ -43,7 +43,7 @@ use crate::devices::legacy::serial::SerialOut;
 use crate::devices::legacy::RTCDevice;
 use crate::devices::legacy::{EventFdTrigger, SerialEventsWrapper, SerialWrapper};
 use crate::devices::virtio::{
-    Balloon, file::Block, Entropy, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend,
+    file::BlockFile, Balloon, Entropy, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend,
 };
 use crate::devices::BusDevice;
 use crate::persist::{MicrovmState, MicrovmStateError};
@@ -885,7 +885,7 @@ fn attach_entropy_device(
     attach_virtio_device(event_manager, vmm, id, entropy_device.clone(), cmdline)
 }
 
-fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Block>>> + Debug>(
+fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<BlockFile>>> + Debug>(
     vmm: &mut Vmm,
     cmdline: &mut LoaderKernelCmdline,
     blocks: I,
