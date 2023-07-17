@@ -15,7 +15,9 @@ use utils::eventfd::EventFd;
 use utils::vm_memory::{Address, ByteValued, Bytes, GuestAddress, GuestMemoryMmap};
 use virtio_gen::virtio_blk::VIRTIO_F_VERSION_1;
 
-use super::super::{ActivateError, DeviceState, Queue, VirtioDevice, TYPE_BALLOON};
+use super::super::{
+    ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BALLOON, TYPE_BALLOON,
+};
 use super::util::{compact_page_frame_numbers, remove_range};
 use super::{
     BALLOON_DEV_ID, BALLOON_NUM_QUEUES, BALLOON_QUEUE_SIZES, DEFLATE_INDEX, INFLATE_INDEX,
@@ -26,6 +28,7 @@ use super::{
     VIRTIO_BALLOON_S_MEMTOT, VIRTIO_BALLOON_S_MINFLT, VIRTIO_BALLOON_S_SWAP_IN,
     VIRTIO_BALLOON_S_SWAP_OUT,
 };
+use crate::arch::DeviceSubtype;
 use crate::devices::virtio::balloon::BalloonError;
 use crate::devices::virtio::{IrqTrigger, IrqType};
 
@@ -536,6 +539,10 @@ impl VirtioDevice for Balloon {
 
     fn device_type(&self) -> u32 {
         TYPE_BALLOON
+    }
+
+    fn device_subtype(&self) -> DeviceSubtype {
+        SUBTYPE_BALLOON
     }
 
     fn queues(&self) -> &[Queue] {

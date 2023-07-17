@@ -20,14 +20,15 @@ use vm_allocator::{AddressAllocator, AllocPolicy, IdAllocator};
 
 #[cfg(target_arch = "aarch64")]
 use crate::arch::aarch64::DeviceInfoForFDT;
+use crate::arch::DeviceSubtype;
 use crate::arch::DeviceType;
 use crate::arch::DeviceType::Virtio;
 #[cfg(target_arch = "aarch64")]
 use crate::devices::legacy::RTCDevice;
 use crate::devices::pseudo::BootTimer;
 use crate::devices::virtio::{
-    Balloon, Block, Entropy, MmioTransport, Net, VirtioDevice, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
-    TYPE_RNG, TYPE_VSOCK,
+    Balloon, Block, Entropy, MmioTransport, Net, VirtioDevice, SUBTYPE_BALLOON, SUBTYPE_BLOCK,
+    SUBTYPE_NET, SUBTYPE_RNG, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG, TYPE_VSOCK,
 };
 use crate::devices::BusDevice;
 
@@ -87,7 +88,7 @@ pub struct MMIODeviceManager {
     pub(crate) bus: crate::devices::Bus,
     pub(crate) irq_allocator: IdAllocator,
     pub(crate) address_allocator: AddressAllocator,
-    pub(crate) id_to_dev_info: HashMap<(DeviceType, String), MMIODeviceInfo>,
+    pub(crate) id_to_dev_info: HashMap<(DeviceType, DeviceSubtype, String), MMIODeviceInfo>,
 }
 
 impl MMIODeviceManager {
@@ -127,7 +128,7 @@ impl MMIODeviceManager {
     /// Register a device at some MMIO address.
     fn register_mmio_device(
         &mut self,
-        identifier: (DeviceType, String),
+        identifier: (DeviceType, DeviceSubtype, String),
         device_info: MMIODeviceInfo,
         device: Arc<Mutex<BusDevice>>,
     ) -> Result<(), MmioError> {
@@ -154,7 +155,11 @@ impl MMIODeviceManager {
         let identifier;
         {
             let locked_device = mmio_device.locked_device();
-            identifier = (DeviceType::Virtio(locked_device.device_type()), device_id);
+            identifier = (
+                DeviceType::Virtio(locked_device.device_type()),
+                locked_device.device_subtype(),
+                device_id,
+            );
             for (i, queue_evt) in locked_device.queue_events().iter().enumerate() {
                 let io_addr = IoEventAddress::Mmio(
                     device_info.addr + u64::from(crate::devices::virtio::NOTIFY_REG_OFFSET),
@@ -290,7 +295,7 @@ impl MMIODeviceManager {
         // Attach a new boot timer device.
         let device_info = self.allocate_mmio_resources(0)?;
 
-        let identifier = (DeviceType::BootTimer, DeviceType::BootTimer.to_string());
+        let identifier = (DeviceType::BootTimer, 0, DeviceType::BootTimer.to_string());
         self.register_mmio_device(
             identifier,
             device_info,
@@ -299,7 +304,7 @@ impl MMIODeviceManager {
     }
 
     /// Gets the information of the devices registered up to some point in time.
-    pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MMIODeviceInfo> {
+    pub fn get_device_info(&self) -> &HashMap<(DeviceType, DeviceSubtype, String), MMIODeviceInfo> {
         &self.id_to_dev_info
     }
 
@@ -317,11 +322,12 @@ impl MMIODeviceManager {
     pub fn get_device(
         &self,
         device_type: DeviceType,
+        device_subtype: DeviceSubtype,
         device_id: &str,
     ) -> Option<&Mutex<BusDevice>> {
-        if let Some(device_info) = self
-            .id_to_dev_info
-            .get(&(device_type, device_id.to_string()))
+        if let Some(device_info) =
+            self.id_to_dev_info
+                .get(&(device_type, device_subtype, device_id.to_string()))
         {
             if let Some((_, device)) = self.bus.get_device(device_info.addr) {
                 return Some(device);
@@ -333,14 +339,27 @@ impl MMIODeviceManager {
     /// Run fn for each registered device.
     pub fn for_each_device<F, E: Debug>(&self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(&DeviceType, &String, &MMIODeviceInfo, &Mutex<BusDevice>) -> Result<(), E>,
+        F: FnMut(
+            &DeviceType,
+            &DeviceSubtype,
+            &String,
+            &MMIODeviceInfo,
+            &Mutex<BusDevice>,
+        ) -> Result<(), E>,
     {
-        for ((device_type, device_id), device_info) in self.get_device_info().iter() {
+        for ((device_type, device_subtype, device_id), device_info) in self.get_device_info().iter()
+        {
             let bus_device = self
-                .get_device(*device_type, device_id)
+                .get_device(*device_type, *device_subtype, device_id)
                 // Safe to unwrap() because we know the device exists.
                 .unwrap();
-            f(device_type, device_id, device_info, bus_device)?;
+            f(
+                device_type,
+                device_subtype,
+                device_id,
+                device_info,
+                bus_device,
+            )?;
         }
         Ok(())
     }
@@ -348,20 +367,34 @@ impl MMIODeviceManager {
     /// Run fn for each registered virtio device.
     pub fn for_each_virtio_device<F, E: Debug>(&self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(u32, &String, &MMIODeviceInfo, Arc<Mutex<dyn VirtioDevice>>) -> Result<(), E>,
+        F: FnMut(
+            u32,
+            DeviceSubtype,
+            &String,
+            &MMIODeviceInfo,
+            Arc<Mutex<dyn VirtioDevice>>,
+        ) -> Result<(), E>,
     {
-        self.for_each_device(|device_type, device_id, device_info, bus_device| {
-            if let Virtio(virtio_type) = device_type {
-                let virtio_device = bus_device
-                    .lock()
-                    .expect("Poisoned lock")
-                    .mmio_transport_ref()
-                    .expect("Unexpected device type")
-                    .device();
-                f(*virtio_type, device_id, device_info, virtio_device)?;
-            }
-            Ok(())
-        })?;
+        self.for_each_device(
+            |device_type, device_subtype, device_id, device_info, bus_device| {
+                if let Virtio(virtio_type) = device_type {
+                    let virtio_device = bus_device
+                        .lock()
+                        .expect("Poisoned lock")
+                        .mmio_transport_ref()
+                        .expect("Unexpected device type")
+                        .device();
+                    f(
+                        *virtio_type,
+                        *device_subtype,
+                        device_id,
+                        device_info,
+                        virtio_device,
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
 
         Ok(())
     }
@@ -370,6 +403,7 @@ impl MMIODeviceManager {
     pub fn with_virtio_device_with_id<T, F>(
         &self,
         virtio_type: u32,
+        virtio_subtype: DeviceSubtype,
         id: &str,
         f: F,
     ) -> Result<(), MmioError>
@@ -377,7 +411,7 @@ impl MMIODeviceManager {
         T: VirtioDevice + 'static + Debug,
         F: FnOnce(&mut T) -> Result<(), String>,
     {
-        if let Some(busdev) = self.get_device(DeviceType::Virtio(virtio_type), id) {
+        if let Some(busdev) = self.get_device(DeviceType::Virtio(virtio_type), virtio_subtype, id) {
             let virtio_device = busdev
                 .lock()
                 .expect("Poisoned lock")
@@ -401,39 +435,55 @@ impl MMIODeviceManager {
         info!("Artificially kick devices.");
         // We only kick virtio devices for now.
         let _: Result<(), MmioError> =
-            self.for_each_virtio_device(|virtio_type, id, _info, dev| {
+            self.for_each_virtio_device(|virtio_type, virtio_subtype, id, _info, dev| {
                 let mut virtio = dev.lock().expect("Poisoned lock");
                 match virtio_type {
                     TYPE_BALLOON => {
-                        let balloon = virtio.as_mut_any().downcast_mut::<Balloon>().unwrap();
-                        // If device is activated, kick the balloon queue(s) to make up for any
-                        // pending or in-flight epoll events we may have not captured in snapshot.
-                        // Stats queue doesn't need kicking as it is notified via a `timer_fd`.
-                        if balloon.is_activated() {
-                            info!("kick balloon {}.", id);
-                            balloon.process_virtio_queues();
+                        match virtio_subtype {
+                            SUBTYPE_BALLOON => {
+                                let balloon =
+                                    virtio.as_mut_any().downcast_mut::<Balloon>().unwrap();
+                                // If device is activated, kick the balloon queue(s) to make up for any
+                                // pending or in-flight epoll events we may have not captured in snapshot.
+                                // Stats queue doesn't need kicking as it is notified via a `timer_fd`.
+                                if balloon.is_activated() {
+                                    info!("kick balloon {}.", id);
+                                    balloon.process_virtio_queues();
+                                }
+                            }
+                            _ => (),
                         }
                     }
                     TYPE_BLOCK => {
-                        let block = virtio.as_mut_any().downcast_mut::<Block>().unwrap();
-                        // If device is activated, kick the block queue(s) to make up for any
-                        // pending or in-flight epoll events we may have not captured in snapshot.
-                        // No need to kick Ratelimiters because they are restored 'unblocked' so
-                        // any inflight `timer_fd` events can be safely discarded.
-                        if block.is_activated() {
-                            info!("kick block {}.", id);
-                            block.process_virtio_queues();
+                        match virtio_subtype {
+                            SUBTYPE_BLOCK => {
+                                let block = virtio.as_mut_any().downcast_mut::<Block>().unwrap();
+                                // If device is activated, kick the block queue(s) to make up for any
+                                // pending or in-flight epoll events we may have not captured in snapshot.
+                                // No need to kick Ratelimiters because they are restored 'unblocked' so
+                                // any inflight `timer_fd` events can be safely discarded.
+                                if block.is_activated() {
+                                    info!("kick block {}.", id);
+                                    block.process_virtio_queues();
+                                }
+                            }
+                            _ => (),
                         }
                     }
                     TYPE_NET => {
-                        let net = virtio.as_mut_any().downcast_mut::<Net>().unwrap();
-                        // If device is activated, kick the net queue(s) to make up for any
-                        // pending or in-flight epoll events we may have not captured in snapshot.
-                        // No need to kick Ratelimiters because they are restored 'unblocked' so
-                        // any inflight `timer_fd` events can be safely discarded.
-                        if net.is_activated() {
-                            info!("kick net {}.", id);
-                            net.process_virtio_queues();
+                        match virtio_subtype {
+                            SUBTYPE_NET => {
+                                let net = virtio.as_mut_any().downcast_mut::<Net>().unwrap();
+                                // If device is activated, kick the net queue(s) to make up for any
+                                // pending or in-flight epoll events we may have not captured in snapshot.
+                                // No need to kick Ratelimiters because they are restored 'unblocked' so
+                                // any inflight `timer_fd` events can be safely discarded.
+                                if net.is_activated() {
+                                    info!("kick net {}.", id);
+                                    net.process_virtio_queues();
+                                }
+                            }
+                            _ => (),
                         }
                     }
                     TYPE_VSOCK => {
@@ -442,13 +492,16 @@ impl MMIODeviceManager {
                         // Any in-flight packets or events are simply lost.
                         // Vsock is restored 'empty'.
                     }
-                    TYPE_RNG => {
-                        let entropy = virtio.as_mut_any().downcast_mut::<Entropy>().unwrap();
-                        if entropy.is_activated() {
-                            info!("kick entropy {id}.");
-                            entropy.process_virtio_queues();
+                    TYPE_RNG => match virtio_subtype {
+                        SUBTYPE_RNG => {
+                            let entropy = virtio.as_mut_any().downcast_mut::<Entropy>().unwrap();
+                            if entropy.is_activated() {
+                                info!("kick entropy {id}.");
+                                entropy.process_virtio_queues();
+                            }
                         }
-                    }
+                        _ => (),
+                    },
                     _ => (),
                 }
                 Ok(())
@@ -479,7 +532,7 @@ mod tests {
 
     use super::*;
     use crate::builder;
-    use crate::devices::virtio::{ActivateError, Queue, VirtioDevice};
+    use crate::devices::virtio::{ActivateError, Queue, VirtioDevice, SUBTYPE_NON_VIRTIO};
 
     const QUEUE_SIZES: &[u16] = &[64];
 
@@ -532,6 +585,10 @@ mod tests {
 
         fn device_type(&self) -> u32 {
             0
+        }
+
+        fn device_subtype(&self) -> DeviceSubtype {
+            SUBTYPE_NON_VIRTIO
         }
 
         fn queues(&self) -> &[Queue] {
@@ -694,25 +751,27 @@ mod tests {
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
 
         let type_id = dummy.lock().unwrap().device_type();
+        let subtype_id = dummy.lock().unwrap().device_subtype();
         let id = String::from("foo");
         let addr = device_manager
             .register_virtio_test_device(vm.fd(), guest_mem, dummy, &mut cmdline, &id)
             .unwrap();
         assert!(device_manager
-            .get_device(DeviceType::Virtio(type_id), &id)
+            .get_device(DeviceType::Virtio(type_id), subtype_id, &id)
             .is_some());
         assert_eq!(
             addr,
-            device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), id.clone())].addr
+            device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), subtype_id, id.clone())]
+                .addr
         );
         assert_eq!(
             crate::arch::IRQ_BASE,
-            device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), id)].irqs[0]
+            device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), subtype_id, id)].irqs[0]
         );
 
         let id = "bar";
         assert!(device_manager
-            .get_device(DeviceType::Virtio(type_id), id)
+            .get_device(DeviceType::Virtio(type_id), subtype_id, id)
             .is_none());
 
         let dummy2 = Arc::new(Mutex::new(DummyDevice::new()));
@@ -722,15 +781,17 @@ mod tests {
             .unwrap();
 
         let mut count = 0;
-        let _: Result<(), MmioError> = device_manager.for_each_device(|devtype, devid, _, _| {
-            assert_eq!(*devtype, DeviceType::Virtio(type_id));
-            match devid.as_str() {
-                "foo" => count += 1,
-                "foo2" => count += 2,
-                _ => unreachable!(),
-            };
-            Ok(())
-        });
+        let _: Result<(), MmioError> =
+            device_manager.for_each_device(|devtype, devsubtype, devid, _, _| {
+                assert_eq!(*devtype, DeviceType::Virtio(type_id));
+                assert_eq!(*devsubtype, subtype_id);
+                match devid.as_str() {
+                    "foo" => count += 1,
+                    "foo2" => count += 2,
+                    _ => unreachable!(),
+                };
+                Ok(())
+            });
         assert_eq!(count, 3);
         #[cfg(target_arch = "x86_64")]
         assert_eq!(device_manager.used_irqs_count(), 2);

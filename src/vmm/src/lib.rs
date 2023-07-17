@@ -79,7 +79,7 @@ use utils::terminal::Terminal;
 use utils::vm_memory::{GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 use vstate::vcpu::{self, KvmVcpuConfigureError, StartThreadedError, VcpuSendEventError};
 
-use crate::arch::DeviceType;
+use crate::arch::{DeviceSubtype, DeviceType};
 use crate::cpu_config::templates::CpuConfiguration;
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
@@ -87,8 +87,8 @@ use crate::device_manager::mmio::MMIODeviceManager;
 use crate::devices::legacy::{IER_RDA_BIT, IER_RDA_OFFSET};
 use crate::devices::virtio::balloon::BalloonError;
 use crate::devices::virtio::{
-    Balloon, BalloonConfig, BalloonStats, Block, Net, BALLOON_DEV_ID, TYPE_BALLOON, TYPE_BLOCK,
-    TYPE_NET,
+    Balloon, BalloonConfig, BalloonStats, Block, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
+    SUBTYPE_BLOCK, SUBTYPE_NET, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
 };
 use crate::memory_snapshot::SnapshotMemory;
 use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
@@ -345,9 +345,11 @@ impl Vmm {
     pub fn get_bus_device(
         &self,
         device_type: DeviceType,
+        device_subtype: DeviceSubtype,
         device_id: &str,
     ) -> Option<&Mutex<devices::bus::BusDevice>> {
-        self.mmio_device_manager.get_device(device_type, device_id)
+        self.mmio_device_manager
+            .get_device(device_type, device_subtype, device_id)
     }
 
     /// Starts the microVM vcpus.
@@ -663,7 +665,7 @@ impl Vmm {
         path_on_host: String,
     ) -> Result<(), VmmError> {
         self.mmio_device_manager
-            .with_virtio_device_with_id(TYPE_BLOCK, drive_id, |block: &mut Block| {
+            .with_virtio_device_with_id(TYPE_BLOCK, SUBTYPE_BLOCK, drive_id, |block: &mut Block| {
                 block
                     .update_disk_image(path_on_host)
                     .map_err(|err| format!("{:?}", err))
@@ -679,7 +681,7 @@ impl Vmm {
         rl_ops: BucketUpdate,
     ) -> Result<(), VmmError> {
         self.mmio_device_manager
-            .with_virtio_device_with_id(TYPE_BLOCK, drive_id, |block: &mut Block| {
+            .with_virtio_device_with_id(TYPE_BLOCK, SUBTYPE_BLOCK, drive_id, |block: &mut Block| {
                 block.update_rate_limiter(rl_bytes, rl_ops);
                 Ok(())
             })
@@ -696,7 +698,7 @@ impl Vmm {
         tx_ops: BucketUpdate,
     ) -> Result<(), VmmError> {
         self.mmio_device_manager
-            .with_virtio_device_with_id(TYPE_NET, net_id, |net: &mut Net| {
+            .with_virtio_device_with_id(TYPE_NET, SUBTYPE_NET, net_id, |net: &mut Net| {
                 net.patch_rate_limiters(rx_bytes, rx_ops, tx_bytes, tx_ops);
                 Ok(())
             })
@@ -705,8 +707,11 @@ impl Vmm {
 
     /// Returns a reference to the balloon device if present.
     pub fn balloon_config(&self) -> Result<BalloonConfig, BalloonError> {
-        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_BALLOON), BALLOON_DEV_ID)
-        {
+        if let Some(busdev) = self.get_bus_device(
+            DeviceType::Virtio(TYPE_BALLOON),
+            SUBTYPE_BALLOON,
+            BALLOON_DEV_ID,
+        ) {
             let virtio_device = busdev
                 .lock()
                 .expect("Poisoned lock")
@@ -730,8 +735,11 @@ impl Vmm {
 
     /// Returns the latest balloon statistics if they are enabled.
     pub fn latest_balloon_stats(&self) -> Result<BalloonStats, BalloonError> {
-        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_BALLOON), BALLOON_DEV_ID)
-        {
+        if let Some(busdev) = self.get_bus_device(
+            DeviceType::Virtio(TYPE_BALLOON),
+            SUBTYPE_BALLOON,
+            BALLOON_DEV_ID,
+        ) {
             let virtio_device = busdev
                 .lock()
                 .expect("Poisoned lock")
@@ -763,8 +771,11 @@ impl Vmm {
             return Err(BalloonError::TooManyPagesRequested);
         }
 
-        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_BALLOON), BALLOON_DEV_ID)
-        {
+        if let Some(busdev) = self.get_bus_device(
+            DeviceType::Virtio(TYPE_BALLOON),
+            SUBTYPE_BALLOON,
+            BALLOON_DEV_ID,
+        ) {
             {
                 let virtio_device = busdev
                     .lock()
@@ -793,8 +804,11 @@ impl Vmm {
         &mut self,
         stats_polling_interval_s: u16,
     ) -> Result<(), BalloonError> {
-        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_BALLOON), BALLOON_DEV_ID)
-        {
+        if let Some(busdev) = self.get_bus_device(
+            DeviceType::Virtio(TYPE_BALLOON),
+            SUBTYPE_BALLOON,
+            BALLOON_DEV_ID,
+        ) {
             {
                 let virtio_device = busdev
                     .lock()

@@ -21,6 +21,8 @@ pub mod rng;
 pub mod test_utils;
 pub mod vsock;
 
+use crate::arch::DeviceSubtype;
+
 pub use self::balloon::*;
 pub use self::block::*;
 pub use self::device::*;
@@ -54,6 +56,14 @@ pub const TYPE_NET: u32 = 1;
 pub const TYPE_BLOCK: u32 = 2;
 pub const TYPE_RNG: u32 = 4;
 pub const TYPE_BALLOON: u32 = 5;
+
+/// Type 0 is not used by virtio. Use it as wildcard for non-virtio devices
+pub const SUBTYPE_NON_VIRTIO: DeviceSubtype = 0;
+pub const SUBTYPE_NET: DeviceSubtype = 0;
+pub const SUBTYPE_BLOCK: DeviceSubtype = 0;
+pub const SUBTYPE_RNG: DeviceSubtype = 0;
+pub const SUBTYPE_BALLOON: DeviceSubtype = 0;
+pub const SUBTYPE_VSOCK: DeviceSubtype = 0;
 
 /// Offset from the base MMIO address of a virtio device used by the guest to notify the device of
 /// queue events.

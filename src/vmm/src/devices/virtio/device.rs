@@ -14,6 +14,7 @@ use utils::eventfd::EventFd;
 use utils::vm_memory::GuestMemoryMmap;
 
 use super::{ActivateError, Queue};
+use crate::arch::DeviceSubtype;
 use crate::devices::virtio::{AsAny, VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING};
 
 /// Enum that indicates if a VirtioDevice is inactive or has been activated
@@ -103,6 +104,9 @@ pub trait VirtioDevice: AsAny + Send {
 
     /// The virtio device type.
     fn device_type(&self) -> u32;
+
+    /// The virtio device subtype.
+    fn device_subtype(&self) -> DeviceSubtype;
 
     /// Returns the device queues.
     fn queues(&self) -> &[Queue];
@@ -245,6 +249,10 @@ pub(crate) mod tests {
         }
 
         fn device_type(&self) -> u32 {
+            todo!()
+        }
+
+        fn device_subtype(&self) -> DeviceSubtype {
             todo!()
         }
 

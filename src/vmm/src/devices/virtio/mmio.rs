@@ -385,6 +385,10 @@ pub(crate) mod tests {
             123
         }
 
+        fn device_subtype(&self) -> DeviceSubtype {
+            456
+        }
+
         fn queues(&self) -> &[Queue] {
             &self.queues
         }

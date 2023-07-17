@@ -27,13 +27,14 @@ use virtio_gen::virtio_blk::{
 };
 use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
-use super::super::{ActivateError, DeviceState, Queue, VirtioDevice, TYPE_BLOCK};
+use super::super::{ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BLOCK, TYPE_BLOCK};
 use super::io::async_io;
 use super::request::*;
 use super::{
     io as block_io, BlockError, BLOCK_CONFIG_SPACE_SIZE, BLOCK_QUEUE_SIZES, SECTOR_SHIFT,
     SECTOR_SIZE,
 };
+use crate::arch::DeviceSubtype;
 use crate::devices::virtio::{IrqTrigger, IrqType};
 
 /// Configuration options for disk caching.
@@ -543,6 +544,10 @@ impl VirtioDevice for Block {
 
     fn device_type(&self) -> u32 {
         TYPE_BLOCK
+    }
+
+    fn device_subtype(&self) -> DeviceSubtype {
+        SUBTYPE_BLOCK
     }
 
     fn queues(&self) -> &[Queue] {

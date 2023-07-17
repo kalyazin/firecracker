@@ -31,13 +31,15 @@ use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
 const FRAME_HEADER_MAX_LEN: usize = PAYLOAD_OFFSET + ETH_IPV4_FRAME_LEN;
 
+use crate::arch::DeviceSubtype;
 use crate::devices::virtio::iovec::IoVecBuffer;
 use crate::devices::virtio::net::tap::Tap;
 use crate::devices::virtio::net::{
     NetError, NetQueue, MAX_BUFFER_SIZE, NET_QUEUE_SIZES, RX_INDEX, TX_INDEX,
 };
 use crate::devices::virtio::{
-    ActivateError, DescriptorChain, DeviceState, IrqTrigger, IrqType, Queue, VirtioDevice, TYPE_NET,
+    ActivateError, DescriptorChain, DeviceState, IrqTrigger, IrqType, Queue, VirtioDevice,
+    SUBTYPE_NET, TYPE_NET,
 };
 use crate::devices::{report_net_event_fail, DeviceError};
 
@@ -752,6 +754,10 @@ impl VirtioDevice for Net {
 
     fn device_type(&self) -> u32 {
         TYPE_NET
+    }
+
+    fn device_subtype(&self) -> DeviceSubtype {
+        SUBTYPE_NET
     }
 
     fn queues(&self) -> &[Queue] {
