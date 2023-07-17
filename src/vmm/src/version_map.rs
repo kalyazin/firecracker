@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use versionize::{VersionMap, Versionize};
 
 use crate::device_manager::persist::DeviceStates;
-use crate::devices::virtio::block::persist::BlockState;
+use crate::devices::virtio::block::file::persist::BlockState;
 use crate::devices::virtio::net::persist::NetConfigSpaceState;
 use crate::devices::virtio::QueueState;
 use crate::persist::VmInfo;

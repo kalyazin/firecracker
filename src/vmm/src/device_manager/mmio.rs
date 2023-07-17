@@ -27,7 +27,7 @@ use crate::arch::DeviceType::Virtio;
 use crate::devices::legacy::RTCDevice;
 use crate::devices::pseudo::BootTimer;
 use crate::devices::virtio::{
-    Balloon, Block, Entropy, MmioTransport, Net, VirtioDevice, SUBTYPE_BALLOON, SUBTYPE_BLOCK,
+    Balloon, file::Block, Entropy, MmioTransport, Net, VirtioDevice, SUBTYPE_BALLOON, SUBTYPE_BLOCK,
     SUBTYPE_NET, SUBTYPE_RNG, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG, TYPE_VSOCK,
 };
 use crate::devices::BusDevice;

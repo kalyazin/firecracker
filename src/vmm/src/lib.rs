@@ -87,7 +87,7 @@ use crate::device_manager::mmio::MMIODeviceManager;
 use crate::devices::legacy::{IER_RDA_BIT, IER_RDA_OFFSET};
 use crate::devices::virtio::balloon::BalloonError;
 use crate::devices::virtio::{
-    Balloon, BalloonConfig, BalloonStats, Block, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
+    Balloon, BalloonConfig, BalloonStats, file::Block, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
     SUBTYPE_BLOCK, SUBTYPE_NET, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
 };
 use crate::memory_snapshot::SnapshotMemory;
