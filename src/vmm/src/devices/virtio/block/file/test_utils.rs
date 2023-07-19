@@ -16,7 +16,8 @@ use utils::vm_memory::{Bytes, GuestAddress};
 use crate::devices::virtio::block::file::device::FileEngineType;
 #[cfg(test)]
 use crate::devices::virtio::block::file::io::FileEngine;
-use crate::devices::virtio::file::{BlockFile, CacheType, RequestHeader};
+use crate::devices::virtio::block::CacheType;
+use crate::devices::virtio::file::{BlockFile, RequestHeader};
 use crate::devices::virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 use crate::devices::virtio::test_utils::{VirtQueue, VirtqDesc};
 #[cfg(test)]

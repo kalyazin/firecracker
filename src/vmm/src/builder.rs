@@ -42,6 +42,7 @@ use crate::devices::legacy::serial::SerialOut;
 #[cfg(target_arch = "aarch64")]
 use crate::devices::legacy::RTCDevice;
 use crate::devices::legacy::{EventFdTrigger, SerialEventsWrapper, SerialWrapper};
+use crate::devices::virtio::Disk;
 use crate::devices::virtio::{
     file::BlockFile, Balloon, Entropy, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend,
 };

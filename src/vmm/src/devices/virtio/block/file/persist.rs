@@ -17,33 +17,10 @@ use virtio_gen::virtio_blk::VIRTIO_BLK_F_RO;
 
 use super::*;
 use crate::devices::virtio::block::file::device::FileEngineType;
+use crate::devices::virtio::block::CacheTypeState;
 use crate::devices::virtio::persist::VirtioDeviceState;
+use crate::devices::virtio::Disk;
 use crate::devices::virtio::{DeviceState, TYPE_BLOCK};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Versionize)]
-// NOTICE: Any changes to this structure require a snapshot version bump.
-pub enum CacheTypeState {
-    Unsafe,
-    Writeback,
-}
-
-impl From<CacheType> for CacheTypeState {
-    fn from(cache_type: CacheType) -> Self {
-        match cache_type {
-            CacheType::Unsafe => CacheTypeState::Unsafe,
-            CacheType::Writeback => CacheTypeState::Writeback,
-        }
-    }
-}
-
-impl From<CacheTypeState> for CacheType {
-    fn from(cache_type_state: CacheTypeState) -> Self {
-        match cache_type_state {
-            CacheTypeState::Unsafe => CacheType::Unsafe,
-            CacheTypeState::Writeback => CacheType::Writeback,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Versionize)]
 // NOTICE: Any changes to this structure require a snapshot version bump.
@@ -125,9 +102,9 @@ impl Persist<'_> for BlockFile {
     fn save(&self) -> Self::State {
         // Save device state.
         BlockState {
-            id: self.id.clone(),
-            partuuid: self.partuuid.clone(),
-            cache_type: CacheTypeState::from(self.cache_type()),
+            id: self.id().clone(),
+            partuuid: self.partuuid().cloned(),
+            cache_type: CacheTypeState::from(self.block().cache_type()),
             root_device: self.root_device,
             disk_path: self.disk.file_path().clone(),
             virtio_state: VirtioDeviceState::from_device(self),
@@ -210,6 +187,7 @@ mod tests {
     use super::*;
     use crate::devices::virtio::device::VirtioDevice;
     use crate::devices::virtio::test_utils::default_mem;
+    use crate::devices::virtio::CacheType;
 
     #[test]
     fn test_cache_type_state_from() {
