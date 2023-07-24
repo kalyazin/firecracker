@@ -1402,7 +1402,7 @@ mod tests {
     #[test]
     fn test_preboot_insert_block_dev() {
         let req = VmmAction::InsertBlockDevice(BlockDeviceConfig {
-            path_on_host: String::new(),
+            path_on_host: Some(String::new()),
             is_root_device: false,
             partuuid: None,
             cache_type: CacheType::Unsafe,
@@ -1410,6 +1410,7 @@ mod tests {
             drive_id: String::new(),
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
+            file: None,
         });
         check_preboot_request(req, |result, vm_res| {
             assert_eq!(result, Ok(VmmData::Empty));
@@ -1417,7 +1418,7 @@ mod tests {
         });
 
         let req = VmmAction::InsertBlockDevice(BlockDeviceConfig {
-            path_on_host: String::new(),
+            path_on_host: Some(String::new()),
             is_root_device: false,
             partuuid: None,
             cache_type: CacheType::Unsafe,
@@ -1425,6 +1426,7 @@ mod tests {
             drive_id: String::new(),
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
+            file: None,
         });
         check_preboot_request_err(
             req,
@@ -2066,7 +2068,7 @@ mod tests {
         );
         check_runtime_request_err(
             VmmAction::InsertBlockDevice(BlockDeviceConfig {
-                path_on_host: String::new(),
+                path_on_host: Some(String::new()),
                 is_root_device: false,
                 partuuid: None,
                 cache_type: CacheType::Unsafe,
@@ -2074,6 +2076,7 @@ mod tests {
                 drive_id: String::new(),
                 rate_limiter: None,
                 file_engine_type: FileEngineType::default(),
+                file: None,
             }),
             VmmActionError::OperationNotSupportedPostBoot,
         );
@@ -2173,7 +2176,7 @@ mod tests {
         verify_load_snap_disallowed_after_boot_resources(req, "ConfigureBootSource");
 
         let req = VmmAction::InsertBlockDevice(BlockDeviceConfig {
-            path_on_host: String::new(),
+            path_on_host: Some(String::new()),
             is_root_device: false,
             partuuid: None,
             cache_type: CacheType::Unsafe,
@@ -2181,6 +2184,7 @@ mod tests {
             drive_id: String::new(),
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
+            file: None,
         });
         verify_load_snap_disallowed_after_boot_resources(req, "InsertBlockDevice");
 

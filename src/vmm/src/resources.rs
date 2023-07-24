@@ -530,13 +530,14 @@ mod tests {
         (
             BlockDeviceConfig {
                 drive_id: "block1".to_string(),
-                path_on_host: tmp_file.as_path().to_str().unwrap().to_string(),
+                path_on_host: Some(tmp_file.as_path().to_str().unwrap().to_string()),
                 is_root_device: false,
                 partuuid: Some("0eaa91a0-01".to_string()),
                 cache_type: CacheType::Unsafe,
                 is_read_only: false,
                 rate_limiter: Some(RateLimiterConfig::default()),
                 file_engine_type: FileEngineType::default(),
+                file: None,
             },
             tmp_file,
         )
@@ -1153,7 +1154,12 @@ mod tests {
                             "drive_id": "rootfs",
                             "path_on_host": "{}",
                             "is_root_device": true,
-                            "is_read_only": false
+                            "is_read_only": false,
+                            "file": {{
+                                "path_on_host": "{}",
+                                "rate_limiter": null,
+                                "io_engine": "Sync"
+                            }}
                         }}
                     ],
                     "network-interfaces": [
@@ -1174,6 +1180,7 @@ mod tests {
                     "entropy": {{}}
             }}"#,
                 kernel_file.as_path().to_str().unwrap(),
+                rootfs_file.as_path().to_str().unwrap(),
                 rootfs_file.as_path().to_str().unwrap(),
             );
 
@@ -1229,7 +1236,12 @@ mod tests {
                             "drive_id": "rootfs",
                             "path_on_host": "{}",
                             "is_root_device": true,
-                            "is_read_only": false
+                            "is_read_only": false,
+                            "file": {{
+                                "path_on_host": "{}",
+                                "rate_limiter": null,
+                                "io_engine": "Sync"
+                            }}
                         }}
                     ],
                     "network-interfaces": [
@@ -1253,6 +1265,7 @@ mod tests {
                     }}
             }}"#,
                 kernel_file.as_path().to_str().unwrap(),
+                rootfs_file.as_path().to_str().unwrap(),
                 rootfs_file.as_path().to_str().unwrap(),
             );
             let resources = VmResources::from_json(
@@ -1288,7 +1301,12 @@ mod tests {
                             "drive_id": "rootfs",
                             "path_on_host": "{}",
                             "is_root_device": true,
-                            "is_read_only": false
+                            "is_read_only": false,
+                            "file": {{
+                                "path_on_host": "{}",
+                                "rate_limiter": null,
+                                "io_engine": "Sync"
+                            }}
                         }}
                     ],
                     "network-interfaces": [
@@ -1312,6 +1330,7 @@ mod tests {
                     }}
             }}"#,
                 kernel_file.as_path().to_str().unwrap(),
+                rootfs_file.as_path().to_str().unwrap(),
                 rootfs_file.as_path().to_str().unwrap(),
             );
             let resources = VmResources::from_json(
@@ -1516,7 +1535,7 @@ mod tests {
         let (mut new_block_device_cfg, _file) = default_block_cfg();
         let tmp_file = TempFile::new().unwrap();
         new_block_device_cfg.drive_id = "block2".to_string();
-        new_block_device_cfg.path_on_host = tmp_file.as_path().to_str().unwrap().to_string();
+        new_block_device_cfg.path_on_host = Some(tmp_file.as_path().to_str().unwrap().to_string());
         assert_eq!(vm_resources.block.list.len(), 1);
         vm_resources.set_block_device(new_block_device_cfg).unwrap();
         assert_eq!(vm_resources.block.list.len(), 2);
