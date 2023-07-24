@@ -111,6 +111,16 @@ impl From<&BlockFile> for BlockDeviceConfig {
     }
 }
 
+/// New configuration for the host-file-backed block device.
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileUpdateConfig {
+    /// Path of the drive.
+    pub path_on_host: Option<String>,
+    /// Rate Limiter for I/O operations.
+    pub rate_limiter: Option<RateLimiterConfig>,
+}
+
 /// Only provided fields will be updated. I.e. if any optional fields
 /// are missing, they will not be updated.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
@@ -122,6 +132,8 @@ pub struct BlockDeviceUpdateConfig {
     pub path_on_host: Option<String>,
     /// New rate limiter config.
     pub rate_limiter: Option<RateLimiterConfig>,
+    /// New configuration for the host-file-backed block device.
+    pub file: Option<FileUpdateConfig>,
 }
 
 /// Enum to combine all block device types.
