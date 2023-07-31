@@ -14,7 +14,7 @@ use super::RateLimiterConfig;
 pub use crate::devices::virtio::block::file::device::FileEngineType;
 use crate::devices::virtio::block::file::BlockError;
 pub use crate::devices::virtio::block::CacheType;
-use crate::devices::virtio::file::BlockFile;
+use crate::devices::virtio::block::file::BlockFile;
 use crate::devices::virtio::Disk;
 use crate::VmmError;
 
