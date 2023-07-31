@@ -38,7 +38,7 @@ pub enum DriveError {
     RootBlockDeviceAlreadyAdded,
 }
 
-/// Host file configuration for the host-file-backed block device.
+/// Configuration for the host-file-backed block device.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileConfig {
