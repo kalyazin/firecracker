@@ -28,7 +28,7 @@ use crate::devices::legacy::RTCDevice;
 use crate::devices::pseudo::BootTimer;
 use crate::devices::virtio::{
     file::BlockFile, Balloon, Entropy, MmioTransport, Net, VirtioDevice, SUBTYPE_BALLOON,
-    SUBTYPE_BLOCK, SUBTYPE_NET, SUBTYPE_RNG, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG,
+    SUBTYPE_BLOCK_FILE, SUBTYPE_NET, SUBTYPE_RNG, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG,
     TYPE_VSOCK,
 };
 use crate::devices::BusDevice;
@@ -457,7 +457,7 @@ impl MMIODeviceManager {
                     }
                     TYPE_BLOCK => {
                         match virtio_subtype {
-                            SUBTYPE_BLOCK => {
+                            SUBTYPE_BLOCK_FILE => {
                                 let block =
                                     virtio.as_mut_any().downcast_mut::<BlockFile>().unwrap();
                                 // If device is activated, kick the block queue(s) to make up for any

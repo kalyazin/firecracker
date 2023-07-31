@@ -28,7 +28,7 @@ use virtio_gen::virtio_blk::{
 use virtio_gen::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
 use super::super::super::{
-    ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BLOCK, TYPE_BLOCK,
+    ActivateError, DeviceState, Queue, VirtioDevice, SUBTYPE_BLOCK_FILE, TYPE_BLOCK,
 };
 use super::super::DiskAttributes;
 use super::io::async_io;
@@ -509,7 +509,7 @@ impl VirtioDevice for BlockFile {
     }
 
     fn device_subtype(&self) -> DeviceSubtype {
-        SUBTYPE_BLOCK
+        SUBTYPE_BLOCK_FILE
     }
 
     fn queues(&self) -> &[Queue] {

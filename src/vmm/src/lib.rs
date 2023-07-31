@@ -88,7 +88,7 @@ use crate::devices::legacy::{IER_RDA_BIT, IER_RDA_OFFSET};
 use crate::devices::virtio::balloon::BalloonError;
 use crate::devices::virtio::{
     file::BlockFile, Balloon, BalloonConfig, BalloonStats, Net, BALLOON_DEV_ID, SUBTYPE_BALLOON,
-    SUBTYPE_BLOCK, SUBTYPE_NET, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
+    SUBTYPE_BLOCK_FILE, SUBTYPE_NET, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
 };
 use crate::memory_snapshot::SnapshotMemory;
 use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
@@ -667,7 +667,7 @@ impl Vmm {
         self.mmio_device_manager
             .with_virtio_device_with_id(
                 TYPE_BLOCK,
-                SUBTYPE_BLOCK,
+                SUBTYPE_BLOCK_FILE,
                 drive_id,
                 |block: &mut BlockFile| {
                     block
@@ -688,7 +688,7 @@ impl Vmm {
         self.mmio_device_manager
             .with_virtio_device_with_id(
                 TYPE_BLOCK,
-                SUBTYPE_BLOCK,
+                SUBTYPE_BLOCK_FILE,
                 drive_id,
                 |block: &mut BlockFile| {
                     block.update_rate_limiter(rl_bytes, rl_ops);

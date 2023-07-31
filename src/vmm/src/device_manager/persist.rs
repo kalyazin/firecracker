@@ -37,7 +37,7 @@ use crate::devices::virtio::vsock::persist::{
 };
 use crate::devices::virtio::vsock::{Vsock, VsockError, VsockUnixBackend, VsockUnixBackendError};
 use crate::devices::virtio::{
-    MmioTransport, VirtioDevice, SUBTYPE_BALLOON, SUBTYPE_BLOCK, SUBTYPE_NET, SUBTYPE_RNG,
+    MmioTransport, VirtioDevice, SUBTYPE_BALLOON, SUBTYPE_BLOCK_FILE, SUBTYPE_NET, SUBTYPE_RNG,
     SUBTYPE_VSOCK, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG, TYPE_VSOCK,
 };
 use crate::resources::VmResources;
@@ -316,7 +316,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                         _ => (),
                     },
                     TYPE_BLOCK => match locked_device.device_subtype() {
-                        SUBTYPE_BLOCK => {
+                        SUBTYPE_BLOCK_FILE => {
                             let block = locked_device
                                 .as_mut_any()
                                 .downcast_mut::<BlockFile>()
