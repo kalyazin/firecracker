@@ -126,7 +126,7 @@ pub struct BlockDeviceUpdateConfig {
     pub path_on_host: Option<String>,
     /// New rate limiter config.
     pub rate_limiter: Option<RateLimiterConfig>,
-    /// New host file configuration for the host-file-backed block device.
+    /// New configuration for the host-file-backed block device.
     pub file: Option<FileUpdateConfig>,
 }
 
