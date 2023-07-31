@@ -80,7 +80,7 @@ pub struct BlockDeviceConfig {
     #[serde(default)]
     #[serde(rename = "io_engine")]
     pub file_engine_type: FileEngineType,
-    /// Host file configuration for the host-file-backed block device.
+    /// Configuration for the host-file-backed block device.
     pub file: Option<FileConfig>,
 }
 
