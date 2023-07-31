@@ -198,7 +198,6 @@ pub struct BlockFile {
     disk_attrs: DiskAttributes,
 
     // Implementation specific fields.
-    pub(crate) root_device: bool,
     pub(crate) rate_limiter: RateLimiter,
     is_io_engine_throttled: bool,
 }
@@ -247,10 +246,10 @@ impl BlockFile {
 
         let queues = BLOCK_QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
 
-        let block = DiskAttributes::new(id, partuuid, cache_type, is_disk_read_only, is_disk_root);
+        let disk_attrs =
+            DiskAttributes::new(id, partuuid, cache_type, is_disk_read_only, is_disk_root);
 
         Ok(BlockFile {
-            root_device: is_disk_root,
             rate_limiter,
             config_space: disk_properties.virtio_block_config_space(),
             disk: disk_properties,
@@ -262,7 +261,7 @@ impl BlockFile {
             irq_trigger: IrqTrigger::new().map_err(BlockError::IrqTrigger)?,
             activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BlockError::EventFd)?,
             is_io_engine_throttled: false,
-            disk_attrs: block,
+            disk_attrs,
         })
     }
 

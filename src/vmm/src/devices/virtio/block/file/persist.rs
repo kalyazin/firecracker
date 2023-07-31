@@ -105,7 +105,7 @@ impl Persist<'_> for BlockFile {
             id: self.id().clone(),
             partuuid: self.partuuid().cloned(),
             cache_type: CacheTypeState::from(self.block().cache_type()),
-            root_device: self.root_device,
+            root_device: self.is_root_device(),
             disk_path: self.disk.file_path().clone(),
             virtio_state: VirtioDeviceState::from_device(self),
             rate_limiter_state: self.rate_limiter.save(),
