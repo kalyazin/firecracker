@@ -105,7 +105,7 @@ impl From<&BlockFile> for BlockDeviceConfig {
     }
 }
 
-/// New file configuration for the host-file-backed block device.
+/// New configuration for the host-file-backed block device.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileUpdateConfig {
