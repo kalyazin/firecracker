@@ -77,7 +77,7 @@ pub struct ConnectedBalloonState {
 /// Holds the state of a block device connected to the MMIO space.
 // NOTICE: Any changes to this structure require a snapshot version bump.
 #[derive(Debug, Clone, Versionize)]
-pub struct ConnectedBlockState {
+pub struct ConnectedBlockFileState {
     /// Device identifier.
     pub device_id: String,
     /// Device state.
@@ -173,8 +173,8 @@ pub struct DeviceStates {
     #[cfg(target_arch = "aarch64")]
     // State of legacy devices in MMIO space.
     pub legacy_devices: Vec<ConnectedLegacyState>,
-    /// Block device states.
-    pub block_devices: Vec<ConnectedBlockState>,
+    /// File-backed block device states.
+    pub block_file_devices: Vec<ConnectedBlockFileState>,
     /// Net device states.
     pub net_devices: Vec<ConnectedNetState>,
     /// Vsock device state.
@@ -263,7 +263,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
     fn save(&self) -> Self::State {
         let mut states = DeviceStates {
             balloon_device: None,
-            block_devices: Vec::new(),
+            block_file_devices: Vec::new(),
             net_devices: Vec::new(),
             vsock_device: None,
             #[cfg(target_arch = "aarch64")]
@@ -322,7 +322,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                                 .downcast_mut::<BlockFile>()
                                 .unwrap();
                             block.prepare_save();
-                            states.block_devices.push(ConnectedBlockState {
+                            states.block_file_devices.push(ConnectedBlockFileState {
                                 device_id: devid.clone(),
                                 device_state: block.save(),
                                 transport_state,
@@ -528,7 +528,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             )?;
         }
 
-        for block_state in &state.block_devices {
+        for block_state in &state.block_file_devices {
             let device = Arc::new(Mutex::new(BlockFile::restore(
                 BlockConstructorArgs { mem: mem.clone() },
                 &block_state.device_state,
@@ -670,8 +670,8 @@ mod tests {
         }
     }
 
-    impl PartialEq for ConnectedBlockState {
-        fn eq(&self, other: &ConnectedBlockState) -> bool {
+    impl PartialEq for ConnectedBlockFileState {
+        fn eq(&self, other: &ConnectedBlockFileState) -> bool {
             // Actual device state equality is checked by the device's tests.
             self.transport_state == other.transport_state && self.device_info == other.device_info
         }
@@ -694,7 +694,7 @@ mod tests {
     impl PartialEq for DeviceStates {
         fn eq(&self, other: &DeviceStates) -> bool {
             self.balloon_device == other.balloon_device
-                && self.block_devices == other.block_devices
+                && self.block_file_devices == other.block_file_devices
                 && self.net_devices == other.net_devices
                 && self.vsock_device == other.vsock_device
         }
