@@ -179,7 +179,7 @@ impl BlockBuilder {
     }
 
     /// Inserts an existing block device.
-    pub fn add_device(&mut self, block_device: Arc<Mutex<BlockFile>>) {
+    pub fn add_file_device(&mut self, block_device: Arc<Mutex<BlockFile>>) {
         if block_device.lock().expect("Poisoned lock").is_root_device() {
             self.list.push_front(Block::FileBacked(block_device));
         } else {
@@ -806,7 +806,7 @@ mod tests {
         )
         .unwrap();
 
-        block_devs.add_device(Arc::new(Mutex::new(block)));
+        block_devs.add_file_device(Arc::new(Mutex::new(block)));
         assert_eq!(block_devs.list.len(), 1);
 
         let block = block_devs.list.pop_back().unwrap();

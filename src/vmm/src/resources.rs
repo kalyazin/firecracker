@@ -217,7 +217,7 @@ impl VmResources {
     pub fn update_from_restored_device(&mut self, device: SharedDeviceType) {
         match device {
             SharedDeviceType::BlockFile(block) => {
-                self.block.add_device(block);
+                self.block.add_file_device(block);
             }
 
             SharedDeviceType::Network(network) => {
