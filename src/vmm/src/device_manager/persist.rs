@@ -49,7 +49,7 @@ use crate::EventManager;
 #[derive(Debug, derive_more::From)]
 pub enum DevicePersistError {
     Balloon(BalloonError),
-    Block(BlockFileError),
+    BlockFile(BlockFileError),
     DeviceManager(super::mmio::MmioError),
     MmioTransport,
     #[cfg(target_arch = "aarch64")]
