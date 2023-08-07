@@ -21,9 +21,9 @@ use crate::VmmError;
 /// Errors associated with the operations allowed on a drive.
 #[derive(Debug, thiserror::Error)]
 pub enum DriveError {
-    /// Could not create a Block Device.
-    #[error("Unable to create the block device: {0:?}")]
-    CreateBlockDevice(BlockFileError),
+    /// Could not create a host-file-backed Block Device.
+    #[error("Unable to create the block file device: {0:?}")]
+    CreateBlockFileDevice(BlockFileError),
     /// Failed to create a `RateLimiter` object.
     #[error("Cannot create RateLimiter: {0}")]
     CreateRateLimiter(io::Error),
@@ -262,7 +262,7 @@ impl BlockBuilder {
             rate_limiter.unwrap_or_default(),
             file_engine_type,
         )
-        .map_err(DriveError::CreateBlockDevice)
+        .map_err(DriveError::CreateBlockFileDevice)
     }
 
     /// Returns a vec with the structures used to configure the devices.
