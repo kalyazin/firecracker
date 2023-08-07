@@ -75,7 +75,7 @@ pub struct ConnectedBalloonState {
     pub device_info: MMIODeviceInfo,
 }
 
-/// Holds the state of a block device connected to the MMIO space.
+/// Holds the state of a host-file-backed block device connected to the MMIO space.
 // NOTICE: Any changes to this structure require a snapshot version bump.
 #[derive(Debug, Clone, Versionize)]
 pub struct ConnectedBlockFileState {
