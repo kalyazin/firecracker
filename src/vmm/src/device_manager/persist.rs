@@ -194,7 +194,7 @@ pub struct DeviceStates {
 /// from a snapshot.
 #[derive(Debug)]
 pub enum SharedDeviceType {
-    Block(Arc<Mutex<BlockFile>>),
+    BlockFile(Arc<Mutex<BlockFile>>),
     Network(Arc<Mutex<Net>>),
     Balloon(Arc<Mutex<Balloon>>),
     Vsock(Arc<Mutex<Vsock<VsockUnixBackend>>>),
@@ -536,7 +536,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
 
             (constructor_args.for_each_restored_device)(
                 constructor_args.vm_resources,
-                SharedDeviceType::Block(device.clone()),
+                SharedDeviceType::BlockFile(device.clone()),
             );
 
             restore_helper(
