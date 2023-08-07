@@ -69,9 +69,13 @@ pub const SUBTYPE_VSOCK: DeviceSubtype = 1;
 /// queue events.
 pub const NOTIFY_REG_OFFSET: u32 = 0x50;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ActivateError {
+    /// Epoll-related error.
+    #[error("epollctl: {0}")]
     EpollCtl(IOError),
+    /// Bad activate.
+    #[error("Bad activate")]
     BadActivate,
 }
 
