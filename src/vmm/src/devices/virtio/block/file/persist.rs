@@ -118,8 +118,8 @@ impl Persist<'_> for BlockFile {
         state: &Self::State,
     ) -> Result<Self, Self::Error> {
         let is_disk_read_only = state.virtio_state.avail_features & (1u64 << VIRTIO_BLK_F_RO) != 0;
-        let rate_limiter =
-            RateLimiter::restore((), &state.rate_limiter_state).map_err(BlockFileError::RateLimiter)?;
+        let rate_limiter = RateLimiter::restore((), &state.rate_limiter_state)
+            .map_err(BlockFileError::RateLimiter)?;
 
         let mut block = BlockFile::new(
             state.id.clone(),
@@ -132,7 +132,9 @@ impl Persist<'_> for BlockFile {
             state.file_engine_type.into(),
         )
         .or_else(|err| match err {
-            BlockFileError::FileEngine(io::BlockIoError::UnsupportedEngine(FileEngineType::Async)) => {
+            BlockFileError::FileEngine(io::BlockIoError::UnsupportedEngine(
+                FileEngineType::Async,
+            )) => {
                 // If the kernel does not support `Async`, fallback to `Sync`.
                 warn!(
                     "The \"Async\" io_engine is supported for kernels starting with {}. \

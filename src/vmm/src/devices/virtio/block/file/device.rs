@@ -130,7 +130,9 @@ impl DiskProperties {
     }
 
     fn build_device_id(disk_file: &File) -> Result<String, BlockFileError> {
-        let blk_metadata = disk_file.metadata().map_err(BlockFileError::GetFileMetadata)?;
+        let blk_metadata = disk_file
+            .metadata()
+            .map_err(BlockFileError::GetFileMetadata)?;
         // This is how kvmtool does it.
         let device_id = format!(
             "{}{}{}",
