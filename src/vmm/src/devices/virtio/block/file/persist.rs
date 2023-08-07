@@ -52,7 +52,7 @@ impl From<FileEngineTypeState> for FileEngineType {
 
 #[derive(Debug, Clone, Versionize)]
 // NOTICE: Any changes to this structure require a snapshot version bump.
-pub struct BlockState {
+pub struct BlockFileState {
     id: String,
     partuuid: Option<String>,
     #[version(
@@ -72,7 +72,7 @@ pub struct BlockState {
     file_engine_type: FileEngineTypeState,
 }
 
-impl BlockState {
+impl BlockFileState {
     fn block_cache_type_ser(&mut self, target_version: u16) -> VersionizeResult<()> {
         if target_version < 3 && self.cache_type != CacheTypeState::Unsafe {
             warn!(
@@ -95,13 +95,13 @@ pub struct BlockConstructorArgs {
 }
 
 impl Persist<'_> for BlockFile {
-    type State = BlockState;
+    type State = BlockFileState;
     type ConstructorArgs = BlockConstructorArgs;
     type Error = BlockError;
 
     fn save(&self) -> Self::State {
         // Save device state.
-        BlockState {
+        BlockFileState {
             id: self.id().clone(),
             partuuid: self.partuuid().cloned(),
             cache_type: CacheTypeState::from(self.block().cache_type()),
@@ -210,11 +210,11 @@ mod tests {
     #[test]
     fn test_default_cache_type_flush() {
         assert_eq!(
-            BlockState::default_cache_type_flush(2),
+            BlockFileState::default_cache_type_flush(2),
             CacheTypeState::Unsafe
         );
         assert_eq!(
-            BlockState::default_cache_type_flush(3),
+            BlockFileState::default_cache_type_flush(3),
             CacheTypeState::Unsafe
         );
     }
@@ -272,7 +272,7 @@ mod tests {
         let mut version_map = VersionMap::new();
         version_map
             .new_version()
-            .set_type_version(BlockState::type_id(), 3);
+            .set_type_version(BlockFileState::type_id(), 3);
 
         if !FileEngineType::Async.is_supported().unwrap() {
             // Test what happens when restoring an Async engine on a kernel that does not support
@@ -306,7 +306,7 @@ mod tests {
             // Restore the block device.
             let restored_block = BlockFile::restore(
                 BlockConstructorArgs { mem: default_mem() },
-                &BlockState::deserialize(&mut mem.as_slice(), &version_map, 2).unwrap(),
+                &BlockFileState::deserialize(&mut mem.as_slice(), &version_map, 2).unwrap(),
             )
             .unwrap();
 
@@ -347,7 +347,7 @@ mod tests {
         // Restore the block device.
         let restored_block = BlockFile::restore(
             BlockConstructorArgs { mem: guest_mem },
-            &BlockState::deserialize(&mut mem.as_slice(), &version_map, 1).unwrap(),
+            &BlockFileState::deserialize(&mut mem.as_slice(), &version_map, 1).unwrap(),
         )
         .unwrap();
 

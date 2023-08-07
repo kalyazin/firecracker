@@ -22,7 +22,7 @@ use crate::arch::DeviceSubtype;
 use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
 use crate::devices::virtio::balloon::{Balloon, BalloonError};
-use crate::devices::virtio::block::file::persist::{BlockConstructorArgs, BlockState};
+use crate::devices::virtio::block::file::persist::{BlockConstructorArgs, BlockFileState};
 use crate::devices::virtio::block::file::{BlockError, BlockFile};
 use crate::devices::virtio::net::persist::{
     NetConstructorArgs, NetPersistError as NetError, NetState,
@@ -82,7 +82,7 @@ pub struct ConnectedBlockFileState {
     /// Device identifier.
     pub device_id: String,
     /// Device state.
-    pub device_state: BlockState,
+    pub device_state: BlockFileState,
     /// Mmio transport state.
     pub transport_state: MmioTransportState,
     /// VmmResources.
