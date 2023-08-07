@@ -201,7 +201,8 @@ impl BlockBuilder {
             return Err(DriveError::RootBlockDeviceAlreadyAdded);
         }
 
-        let block_dev = Arc::new(Mutex::new(Self::create_block(config)?));
+        let block_dev = Arc::new(Mutex::new(Self::create_block_file(config)?));
+
         // If the id of the drive already exists in the list, the operation is update/overwrite.
         match position {
             // New block device.
@@ -226,8 +227,8 @@ impl BlockBuilder {
         Ok(())
     }
 
-    /// Creates a Block device from a BlockDeviceConfig.
-    fn create_block(block_device_config: BlockDeviceConfig) -> Result<BlockFile, DriveError> {
+    /// Creates a host-file-backed Block device from a BlockDeviceConfig.
+    fn create_block_file(block_device_config: BlockDeviceConfig) -> Result<BlockFile, DriveError> {
         // Give priority to the file configuration and fall back to the legacy parameters.
         let (path_on_host, rate_limiter, file_engine_type) = match block_device_config.file {
             Some(file) => (file.path_on_host, file.rate_limiter, file.file_engine_type),
