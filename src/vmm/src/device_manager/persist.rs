@@ -17,6 +17,7 @@ use versionize_derive::Versionize;
 use vm_allocator::AllocPolicy;
 
 use super::mmio::*;
+use crate::arch::DeviceSubtype;
 #[cfg(target_arch = "aarch64")]
 use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
@@ -173,6 +174,9 @@ pub struct DeviceStates {
     #[cfg(target_arch = "aarch64")]
     // State of legacy devices in MMIO space.
     pub legacy_devices: Vec<ConnectedLegacyState>,
+    /// Block device types.
+    #[version(start = 5, de_fn = "de_block_devices", ser_fn = "ser_block_devices")]
+    pub block_device_subtypes: Vec<DeviceSubtype>,
     /// File-backed block device states.
     pub block_file_devices: Vec<ConnectedBlockFileState>,
     /// Net device states.
@@ -202,6 +206,26 @@ pub enum SharedDeviceType {
 }
 
 impl DeviceStates {
+    fn de_block_devices(&mut self, target_version: u16) -> VersionizeResult<()> {
+        if target_version >= 5 && !self.block_device_subtypes.is_empty() {
+            return Err(VersionizeError::Semantic(
+                "Firecracker version does not support block device subtypes.".to_owned(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn ser_block_devices(&mut self, target_version: u16) -> VersionizeResult<()> {
+        if target_version < 5 && !self.block_device_subtypes.is_empty() {
+            return Err(VersionizeError::Semantic(
+                "Target version does not support block device subtypes.".to_owned(),
+            ));
+        }
+
+        Ok(())
+    }
+
     fn balloon_serialize(&mut self, target_version: u16) -> VersionizeResult<()> {
         if target_version < 2 && self.balloon_device.is_some() {
             return Err(VersionizeError::Semantic(
@@ -263,6 +287,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
     fn save(&self) -> Self::State {
         let mut states = DeviceStates {
             balloon_device: None,
+            block_device_subtypes: Vec::new(),
             block_file_devices: Vec::new(),
             net_devices: Vec::new(),
             vsock_device: None,
@@ -328,6 +353,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                                 transport_state,
                                 device_info: device_info.clone(),
                             });
+                            states.block_device_subtypes.push(SUBTYPE_BLOCK_FILE);
                         }
                         _ => (),
                     },
@@ -528,25 +554,43 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             )?;
         }
 
-        for block_state in &state.block_file_devices {
-            let device = Arc::new(Mutex::new(BlockFile::restore(
-                BlockConstructorArgs { mem: mem.clone() },
-                &block_state.device_state,
-            )?));
+        // If we are restoring from an older snapshot version, `state.block_device_subtypes` may be empty, so we should assume all block devices in `state.block_file_devices` are host-file-backed devices.
+        let default_block_devices_subtypes =
+            vec![SUBTYPE_BLOCK_FILE; state.block_file_devices.len()];
+        let block_subtypes = if state.block_device_subtypes.is_empty() {
+            &default_block_devices_subtypes
+        } else {
+            &state.block_device_subtypes
+        };
 
-            (constructor_args.for_each_restored_device)(
-                constructor_args.vm_resources,
-                SharedDeviceType::BlockFile(device.clone()),
-            );
+        let mut block_file_iter = state.block_file_devices.iter();
+        for block_device_subtype in block_subtypes {
+            match block_device_subtype.clone() {
+                SUBTYPE_BLOCK_FILE => {
+                    // Safe to unwrap, because the subtype vector tracks the device distibution
+                    // between the corresponding vectors.
+                    let block_state = block_file_iter.next().unwrap();
+                    let device = Arc::new(Mutex::new(BlockFile::restore(
+                        BlockConstructorArgs { mem: mem.clone() },
+                        &block_state.device_state,
+                    )?));
 
-            restore_helper(
-                device.clone(),
-                device,
-                &block_state.device_id,
-                &block_state.transport_state,
-                &block_state.device_info,
-                constructor_args.event_manager,
-            )?;
+                    (constructor_args.for_each_restored_device)(
+                        constructor_args.vm_resources,
+                        SharedDeviceType::BlockFile(device.clone()),
+                    );
+
+                    restore_helper(
+                        device.clone(),
+                        device,
+                        &block_state.device_id,
+                        &block_state.transport_state,
+                        &block_state.device_info,
+                        constructor_args.event_manager,
+                    )?;
+                }
+                _ => (),
+            }
         }
 
         // If the snapshot has the mmds version persisted, initialise the data store with it.
