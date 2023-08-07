@@ -90,13 +90,13 @@ impl BlockFileState {
 }
 
 #[derive(Debug)]
-pub struct BlockConstructorArgs {
+pub struct BlockFileConstructorArgs {
     pub mem: GuestMemoryMmap,
 }
 
 impl Persist<'_> for BlockFile {
     type State = BlockFileState;
-    type ConstructorArgs = BlockConstructorArgs;
+    type ConstructorArgs = BlockFileConstructorArgs;
     type Error = BlockError;
 
     fn save(&self) -> Self::State {
@@ -305,7 +305,7 @@ mod tests {
 
             // Restore the block device.
             let restored_block = BlockFile::restore(
-                BlockConstructorArgs { mem: default_mem() },
+                BlockFileConstructorArgs { mem: default_mem() },
                 &BlockFileState::deserialize(&mut mem.as_slice(), &version_map, 2).unwrap(),
             )
             .unwrap();
@@ -346,7 +346,7 @@ mod tests {
 
         // Restore the block device.
         let restored_block = BlockFile::restore(
-            BlockConstructorArgs { mem: guest_mem },
+            BlockFileConstructorArgs { mem: guest_mem },
             &BlockFileState::deserialize(&mut mem.as_slice(), &version_map, 1).unwrap(),
         )
         .unwrap();

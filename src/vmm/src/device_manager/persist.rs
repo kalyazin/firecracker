@@ -22,7 +22,7 @@ use crate::arch::DeviceSubtype;
 use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
 use crate::devices::virtio::balloon::{Balloon, BalloonError};
-use crate::devices::virtio::block::file::persist::{BlockConstructorArgs, BlockFileState};
+use crate::devices::virtio::block::file::persist::{BlockFileConstructorArgs, BlockFileState};
 use crate::devices::virtio::block::file::{BlockError, BlockFile};
 use crate::devices::virtio::net::persist::{
     NetConstructorArgs, NetPersistError as NetError, NetState,
@@ -572,7 +572,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                     // between the corresponding vectors.
                     let block_state = block_file_iter.next().unwrap();
                     let device = Arc::new(Mutex::new(BlockFile::restore(
-                        BlockConstructorArgs { mem: mem.clone() },
+                        BlockFileConstructorArgs { mem: mem.clone() },
                         &block_state.device_state,
                     )?));
 
