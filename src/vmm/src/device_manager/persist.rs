@@ -554,7 +554,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             )?;
         }
 
-        // If we are restoring from an older snapshot version, `state.block_device_subtypes` may be empty, so we should assume all block devices in `state.block_file_devices` are host-file-backed devices.
+        // If we are restoring from an older snapshot version, `state.block_device_subtypes` may be empty,
+        // so we should assume all block devices in `state.block_file_devices` are host-file-backed devices.
         let default_block_devices_subtypes =
             vec![SUBTYPE_BLOCK_FILE; state.block_file_devices.len()];
         let block_subtypes = if state.block_device_subtypes.is_empty() {
