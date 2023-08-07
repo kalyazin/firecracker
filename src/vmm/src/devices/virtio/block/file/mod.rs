@@ -25,7 +25,7 @@ pub const BLOCK_QUEUE_SIZES: [u16; BLOCK_NUM_QUEUES] = [BLOCK_QUEUE_SIZE];
 pub const IO_URING_NUM_ENTRIES: u16 = 128;
 
 #[derive(Debug)]
-pub enum BlockError {
+pub enum BlockFileError {
     /// Guest gave us too few descriptors in a descriptor chain.
     DescriptorChainTooShort,
     /// Guest gave us a descriptor that was too short to use.

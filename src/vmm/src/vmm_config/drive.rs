@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::RateLimiterConfig;
 pub use crate::devices::virtio::block::file::device::FileEngineType;
-use crate::devices::virtio::block::file::BlockError;
+use crate::devices::virtio::block::file::BlockFileError;
 use crate::devices::virtio::block::file::BlockFile;
 pub use crate::devices::virtio::block::CacheType;
 use crate::devices::virtio::Disk;
@@ -23,7 +23,7 @@ use crate::VmmError;
 pub enum DriveError {
     /// Could not create a Block Device.
     #[error("Unable to create the block device: {0:?}")]
-    CreateBlockDevice(BlockError),
+    CreateBlockDevice(BlockFileError),
     /// Failed to create a `RateLimiter` object.
     #[error("Cannot create RateLimiter: {0}")]
     CreateRateLimiter(io::Error),

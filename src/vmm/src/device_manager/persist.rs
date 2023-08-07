@@ -23,7 +23,7 @@ use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
 use crate::devices::virtio::balloon::{Balloon, BalloonError};
 use crate::devices::virtio::block::file::persist::{BlockFileConstructorArgs, BlockFileState};
-use crate::devices::virtio::block::file::{BlockError, BlockFile};
+use crate::devices::virtio::block::file::{BlockFileError, BlockFile};
 use crate::devices::virtio::net::persist::{
     NetConstructorArgs, NetPersistError as NetError, NetState,
 };
@@ -49,7 +49,7 @@ use crate::EventManager;
 #[derive(Debug, derive_more::From)]
 pub enum DevicePersistError {
     Balloon(BalloonError),
-    Block(BlockError),
+    Block(BlockFileError),
     DeviceManager(super::mmio::MmioError),
     MmioTransport,
     #[cfg(target_arch = "aarch64")]

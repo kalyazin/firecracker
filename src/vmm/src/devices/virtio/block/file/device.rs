@@ -34,7 +34,7 @@ use super::super::DiskAttributes;
 use super::io::async_io;
 use super::request::*;
 use super::{
-    io as block_io, BlockError, BLOCK_CONFIG_SPACE_SIZE, BLOCK_QUEUE_SIZES, SECTOR_SHIFT,
+    io as block_io, BlockFileError, BLOCK_CONFIG_SPACE_SIZE, BLOCK_QUEUE_SIZES, SECTOR_SHIFT,
     SECTOR_SIZE,
 };
 use crate::arch::DeviceSubtype;
@@ -79,15 +79,15 @@ impl DiskProperties {
         disk_image_path: String,
         is_disk_read_only: bool,
         file_engine_type: FileEngineType,
-    ) -> Result<Self, BlockError> {
+    ) -> Result<Self, BlockFileError> {
         let mut disk_image = OpenOptions::new()
             .read(true)
             .write(!is_disk_read_only)
             .open(PathBuf::from(&disk_image_path))
-            .map_err(|x| BlockError::BackingFile(x, disk_image_path.clone()))?;
+            .map_err(|x| BlockFileError::BackingFile(x, disk_image_path.clone()))?;
         let disk_size = disk_image
             .seek(SeekFrom::End(0))
-            .map_err(|x| BlockError::BackingFile(x, disk_image_path.clone()))?;
+            .map_err(|x| BlockFileError::BackingFile(x, disk_image_path.clone()))?;
 
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.
@@ -104,7 +104,7 @@ impl DiskProperties {
             image_id: Self::build_disk_image_id(&disk_image),
             file_path: disk_image_path,
             file_engine: FileEngine::from_file(disk_image, file_engine_type)
-                .map_err(BlockError::FileEngine)?,
+                .map_err(BlockFileError::FileEngine)?,
         })
     }
 
@@ -129,8 +129,8 @@ impl DiskProperties {
         &self.image_id
     }
 
-    fn build_device_id(disk_file: &File) -> Result<String, BlockError> {
-        let blk_metadata = disk_file.metadata().map_err(BlockError::GetFileMetadata)?;
+    fn build_device_id(disk_file: &File) -> Result<String, BlockFileError> {
+        let blk_metadata = disk_file.metadata().map_err(BlockFileError::GetFileMetadata)?;
         // This is how kvmtool does it.
         let device_id = format!(
             "{}{}{}",
@@ -228,7 +228,7 @@ impl BlockFile {
         is_disk_root: bool,
         rate_limiter: RateLimiter,
         file_engine_type: FileEngineType,
-    ) -> Result<BlockFile, BlockError> {
+    ) -> Result<BlockFile, BlockFileError> {
         let disk_properties =
             DiskProperties::new(disk_image_path, is_disk_read_only, file_engine_type)?;
 
@@ -242,7 +242,7 @@ impl BlockFile {
             avail_features |= 1u64 << VIRTIO_BLK_F_RO;
         };
 
-        let queue_evts = [EventFd::new(libc::EFD_NONBLOCK).map_err(BlockError::EventFd)?];
+        let queue_evts = [EventFd::new(libc::EFD_NONBLOCK).map_err(BlockFileError::EventFd)?];
 
         let queues = BLOCK_QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
 
@@ -258,8 +258,8 @@ impl BlockFile {
             queue_evts,
             queues,
             device_state: DeviceState::Inactive,
-            irq_trigger: IrqTrigger::new().map_err(BlockError::IrqTrigger)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BlockError::EventFd)?,
+            irq_trigger: IrqTrigger::new().map_err(BlockFileError::IrqTrigger)?,
+            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BlockFileError::EventFd)?,
             is_io_engine_throttled: false,
             disk_attrs,
         })
@@ -429,7 +429,7 @@ impl BlockFile {
     }
 
     /// Update the backing file and the config space of the block device.
-    pub fn update_disk_image(&mut self, disk_image_path: String) -> Result<(), BlockError> {
+    pub fn update_disk_image(&mut self, disk_image_path: String) -> Result<(), BlockFileError> {
         let disk_properties = DiskProperties::new(
             disk_image_path,
             self.is_read_only(),
