@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::RateLimiterConfig;
 pub use crate::devices::virtio::block::file::device::FileEngineType;
 use crate::devices::virtio::block::file::{BlockFile, BlockFileError};
+use crate::devices::virtio::block::vhost_user::{BlockVhostUser, BlockVhostUserError};
 pub use crate::devices::virtio::block::CacheType;
 use crate::devices::virtio::Disk;
 use crate::VmmError;
@@ -23,6 +24,9 @@ pub enum DriveError {
     /// Could not create a host-file-backed Block Device.
     #[error("Unable to create the block file device: {0:?}")]
     CreateBlockFileDevice(BlockFileError),
+    /// Could not create a vhost-user-backed Block Device.
+    #[error("Unable to create the block vhost user device: {0:?}")]
+    CreateBlockVhostUserDevice(BlockVhostUserError),
     /// Failed to create a `RateLimiter` object.
     #[error("Cannot create RateLimiter: {0}")]
     CreateRateLimiter(io::Error),
@@ -38,6 +42,12 @@ pub enum DriveError {
     /// A root block device was already added.
     #[error("A root block device already exists!")]
     RootBlockDeviceAlreadyAdded,
+    /// Mutliple block device configurations provided.
+    #[error("Multiple block device configurations provided!")]
+    MultipleConfigsProvided,
+    /// The vhost user socket is invalid.
+    #[error("Invalid vhost user path: {0}")]
+    InvalidVhostUserSocket(String),
 }
 
 /// Configuration for the host-file-backed block device.
@@ -55,6 +65,14 @@ pub struct FileConfig {
     #[serde(default)]
     #[serde(rename = "io_engine")]
     pub file_engine_type: FileEngineType,
+}
+
+/// Configuration for the vhost-user-backed block device.
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VhostUserConfig {
+    /// Socket path for vhost user
+    pub socket: String,
 }
 
 /// Use this structure to set up the Block Device before booting the kernel.
@@ -87,6 +105,8 @@ pub struct BlockDeviceConfig {
     pub file_engine_type: FileEngineType,
     /// Configuration for the host-file-backed block device.
     pub file: Option<FileConfig>,
+    /// Configuration for the vhost-user-backed block device.
+    pub vhost_user: Option<VhostUserConfig>,
 }
 
 impl From<&BlockFile> for BlockDeviceConfig {
@@ -106,6 +126,26 @@ impl From<&BlockFile> for BlockDeviceConfig {
                 is_read_only: block.is_read_only(),
                 rate_limiter: rl.into_option(),
                 file_engine_type: block.file_engine_type(),
+            }),
+            vhost_user: None,
+        }
+    }
+}
+
+impl From<&BlockVhostUser> for BlockDeviceConfig {
+    fn from(block: &BlockVhostUser) -> Self {
+        BlockDeviceConfig {
+            drive_id: block.id().clone(),
+            path_on_host: None,
+            is_root_device: block.is_root_device(),
+            partuuid: block.partuuid().cloned(),
+            is_read_only: Some(block.is_read_only()),
+            cache_type: block.cache_type(),
+            rate_limiter: None,
+            file_engine_type: FileEngineType::default(),
+            file: None,
+            vhost_user: Some(VhostUserConfig {
+                socket: block.socket().clone(),
             }),
         }
     }
@@ -144,6 +184,8 @@ pub struct BlockDeviceUpdateConfig {
 pub enum Block {
     /// Host-file-backed block device.
     FileBacked(Arc<Mutex<BlockFile>>),
+    /// Vhost-user-backed block device.
+    VhostUserBacked(Arc<Mutex<BlockVhostUser>>),
 }
 
 /// Wrapper for the collection that holds all the Block Devices
@@ -171,6 +213,9 @@ impl BlockBuilder {
         if let Some(block) = self.list.get(0) {
             match block {
                 Block::FileBacked(block) => block.lock().expect("Poisoned lock").is_root_device(),
+                Block::VhostUserBacked(block) => {
+                    block.lock().expect("Poisoned lock").is_root_device()
+                }
             }
         } else {
             false
@@ -181,6 +226,7 @@ impl BlockBuilder {
     fn get_index_of_drive_id(&self, drive_id: &str) -> Option<usize> {
         self.list.iter().position(|b| match b {
             Block::FileBacked(b) => b.lock().expect("Poisoned lock").id().eq(drive_id),
+            Block::VhostUserBacked(b) => b.lock().expect("Poisoned lock").id().eq(drive_id),
         })
     }
 
@@ -190,6 +236,15 @@ impl BlockBuilder {
             self.list.push_front(Block::FileBacked(block_device));
         } else {
             self.list.push_back(Block::FileBacked(block_device));
+        }
+    }
+
+    /// Inserts an existing block device.
+    pub fn add_vhost_user_device(&mut self, block_device: Arc<Mutex<BlockVhostUser>>) {
+        if block_device.lock().expect("Poisoned lock").is_root_device() {
+            self.list.push_front(Block::VhostUserBacked(block_device));
+        } else {
+            self.list.push_back(Block::VhostUserBacked(block_device));
         }
     }
 
@@ -207,21 +262,28 @@ impl BlockBuilder {
             return Err(DriveError::RootBlockDeviceAlreadyAdded);
         }
 
-        let block_dev = Arc::new(Mutex::new(Self::create_block_file(config)?));
+        let block_dev = match (&config.file, &config.vhost_user) {
+            (Some(_), Some(_)) => return Err(DriveError::MultipleConfigsProvided),
+            (None, Some(_)) => {
+                Block::VhostUserBacked(Arc::new(Mutex::new(Self::create_block_vhost_user(config)?)))
+            }
+            (_, None) => Block::FileBacked(Arc::new(Mutex::new(Self::create_block_file(config)?))),
+        };
+
         // If the id of the drive already exists in the list, the operation is update/overwrite.
         match position {
             // New block device.
             None => {
                 if is_root_device {
-                    self.list.push_front(Block::FileBacked(block_dev));
+                    self.list.push_front(block_dev);
                 } else {
-                    self.list.push_back(Block::FileBacked(block_dev));
+                    self.list.push_back(block_dev);
                 }
             }
             // Update existing block device.
             Some(index) => {
                 // Update the slot with the new block.
-                self.list[index] = Block::FileBacked(block_dev);
+                self.list[index] = block_dev;
                 // Check if the root block device is being updated.
                 if index != 0 && is_root_device {
                     // Make sure the root device is on the first position.
@@ -280,12 +342,40 @@ impl BlockBuilder {
         .map_err(DriveError::CreateBlockFileDevice)
     }
 
+    /// Creates a vhost-user-backed Block device from a BlockDeviceConfig.
+    fn create_block_vhost_user(
+        block_device_config: BlockDeviceConfig,
+    ) -> Result<BlockVhostUser, DriveError> {
+        let socket = match block_device_config.vhost_user {
+            Some(vhost_user) => vhost_user.socket,
+            None => return Err(DriveError::InvalidVhostUserSocket("".to_string())),
+        };
+
+        // Check if the socket exists
+        if !PathBuf::from(&socket).exists() {
+            return Err(DriveError::InvalidVhostUserSocket(socket));
+        }
+
+        // Create and return the Block device
+        BlockVhostUser::new(
+            block_device_config.drive_id,
+            block_device_config.partuuid,
+            block_device_config.cache_type,
+            block_device_config.is_root_device,
+            &socket,
+        )
+        .map_err(DriveError::CreateBlockVhostUserDevice)
+    }
+
     /// Returns a vec with the structures used to configure the devices.
     pub fn configs(&self) -> Vec<BlockDeviceConfig> {
         let mut ret = vec![];
         for block in &self.list {
             match block {
                 Block::FileBacked(block) => {
+                    ret.push(BlockDeviceConfig::from(block.lock().unwrap().deref()));
+                }
+                Block::VhostUserBacked(block) => {
                     ret.push(BlockDeviceConfig::from(block.lock().unwrap().deref()));
                 }
             }
@@ -326,6 +416,7 @@ mod tests {
                     rate_limiter: None,
                     file_engine_type: FileEngineType::default(),
                 }),
+                vhost_user: None,
             }
         }
     }
@@ -356,6 +447,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: engine,
             file: None,
+            vhost_user: None,
         };
 
         let mut old_api_block_devs = BlockBuilder::new();
@@ -381,6 +473,7 @@ mod tests {
                 rate_limiter: None,
                 file_engine_type: FileEngineType::Async,
             }),
+            vhost_user: None,
         };
 
         let mut new_api_block_devs = BlockBuilder::new();
@@ -407,6 +500,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -427,6 +521,7 @@ mod tests {
                         dummy_block_device.is_read_only.unwrap()
                     );
                 }
+                Block::VhostUserBacked(_) => todo!(),
             }
         }
         assert_eq!(block_devs.get_index_of_drive_id(&dummy_id), Some(0));
@@ -447,6 +542,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -466,6 +562,7 @@ mod tests {
                         dummy_block_device.is_read_only.unwrap()
                     );
                 }
+                Block::VhostUserBacked(_) => todo!(),
             }
         }
     }
@@ -484,6 +581,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_2 = TempFile::new().unwrap();
@@ -498,6 +596,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -523,6 +622,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_2 = TempFile::new().unwrap();
@@ -537,6 +637,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_3 = TempFile::new().unwrap();
@@ -551,6 +652,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -567,6 +669,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &root_block_device.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
 
         let block = block_iter.next().unwrap();
@@ -574,6 +677,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &dummy_block_dev_2.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
 
         let block = block_iter.next().unwrap();
@@ -581,6 +685,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &dummy_block_dev_3.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
     }
 
@@ -599,6 +704,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_2 = TempFile::new().unwrap();
@@ -613,6 +719,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_3 = TempFile::new().unwrap();
@@ -627,6 +734,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -644,6 +752,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &root_block_device.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
 
         let block = block_iter.next().unwrap();
@@ -651,6 +760,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &dummy_block_dev_2.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
 
         let block = block_iter.next().unwrap();
@@ -658,6 +768,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &dummy_block_dev_3.drive_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
     }
 
@@ -675,6 +786,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let dummy_file_2 = TempFile::new().unwrap();
@@ -689,6 +801,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -726,6 +839,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert!(block.lock().unwrap().is_read_only());
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
 
         // Update with invalid path.
@@ -754,6 +868,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
         // Switch roots and add a PARTUUID for the new one.
         let mut root_block_device_old = root_block_device;
@@ -768,6 +883,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
         assert!(block_devs.insert(root_block_device_old).is_ok());
         let root_block_id = root_block_device_new.drive_id.clone();
@@ -779,6 +895,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().id(), &root_block_id);
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
     }
 
@@ -796,6 +913,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         };
 
         let mut block_devs = BlockBuilder::new();
@@ -841,6 +959,7 @@ mod tests {
             Block::FileBacked(block) => {
                 assert_eq!(block.lock().unwrap().deref().id(), block_id)
             }
+            Block::VhostUserBacked(_) => todo!(),
         }
     }
 }

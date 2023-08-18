@@ -1417,6 +1417,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         });
         check_preboot_request(req, |result, vm_res| {
             assert_eq!(result, Ok(VmmData::Empty));
@@ -1433,6 +1434,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         });
         check_preboot_request_err(
             req,
@@ -2083,6 +2085,7 @@ mod tests {
                 rate_limiter: None,
                 file_engine_type: FileEngineType::default(),
                 file: None,
+                vhost_user: None,
             }),
             VmmActionError::OperationNotSupportedPostBoot,
         );
@@ -2191,6 +2194,7 @@ mod tests {
             rate_limiter: None,
             file_engine_type: FileEngineType::default(),
             file: None,
+            vhost_user: None,
         });
         verify_load_snap_disallowed_after_boot_resources(req, "InsertBlockDevice");
 
