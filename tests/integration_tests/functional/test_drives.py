@@ -428,3 +428,10 @@ def _check_drives(test_microvm, assert_dict, keys_array):
     _, stdout, stderr = test_microvm.ssh.run("blockdev --report")
     assert stderr == ""
     _process_blockdev_output(stdout, assert_dict, keys_array)
+
+
+def test_vh_backend(bin_vhost_user_blk_backend):
+    """vh backend"""
+    be = bin_vhost_user_blk_backend
+    ret, stdout, stderr = utils.run_cmd(f"{be} --help")
+    print(f"{ret=}\n{stdout=}\n{stderr=}")
