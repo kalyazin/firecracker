@@ -454,6 +454,7 @@ impl Block {
 
     /// Update the backing file and the config space of the block device.
     pub fn update_disk_image(&mut self, disk_image_path: String) -> Result<(), BlockError> {
+        self.drain_and_flush(true);
         let disk_properties = DiskProperties::new(
             disk_image_path,
             self.is_read_only(),
