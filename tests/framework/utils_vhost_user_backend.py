@@ -9,17 +9,34 @@ import time
 
 from framework import utils
 
+CROSVM_CTR_SOCKET = "/crosvm_ctr.socket"
 
-def spawn_vhost_user_backend(vm, host_mem_path, socket_path, readonly=False):
+
+def spawn_vhost_user_backend(vm, host_mem_path, socket_path, readonly=False, backend="qemu"):
     """Spawn vhost-user-blk backend."""
 
     uid = vm.jailer.uid
     gid = vm.jailer.gid
 
     sp = f"{vm.chroot()}{socket_path}"
-    args = ["vhost-user-blk", "-s", sp, "-b", host_mem_path]
-    if readonly:
-        args.append("-r")
+
+    if backend == "qemu":
+        args = ["vhost-user-blk", "--socket-path", sp, "--blk-file", host_mem_path]
+        if readonly:
+            args.append("-r")
+    elif backend == "crosvm":
+        ro = "ro" if readonly else ""
+        args = [
+            "crosvm",
+            "devices",
+            "--disable-sandbox",
+            "--control-socket",
+            CROSVM_CTR_SOCKET,
+            "--block",
+            f"vhost={sp},path={host_mem_path},{ro}",
+        ]
+    else:
+        assert False, f"unknown vhost-user-blk backend `{backend}`"
     proc = subprocess.Popen(args)
 
     # Give the backend time to initialise.
@@ -33,3 +50,12 @@ def spawn_vhost_user_backend(vm, host_mem_path, socket_path, readonly=False):
         os.chown(socket_path, uid, gid)
 
     return proc
+
+
+def resize(new_size, backend="crosvm"):
+    """Resize vhost-user-blk drive and send config change notification"""
+
+    if backend != "crosvm":
+        assert False, f"backend `{backend}` does not support resizing"
+
+    utils.run_cmd(f"crosvm disk resize 0 {new_size} {CROSVM_CTR_SOCKET}")
