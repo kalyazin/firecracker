@@ -45,7 +45,8 @@ def _check_drives(test_microvm, assert_dict, keys_array):
         assert blockdev_out_line_cols[col] == assert_dict[key]
 
 
-def test_vhost_user_block(microvm_factory, guest_kernel, rootfs_ubuntu_22):
+@pytest.mark.parametrize('execution_number', range(100))
+def test_vhost_user_block(microvm_factory, guest_kernel, rootfs_ubuntu_22, execution_number):
     """
     This test simply tries to boot a VM with
     vhost-user-block as a root device.
