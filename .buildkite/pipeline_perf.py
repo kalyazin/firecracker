@@ -103,9 +103,9 @@ if REVISION_A is not None:
     # So we only trigger A/B-tests on file changes that have impact on the firecracker
     # binary. These include ".rs" files, "Cargo.toml" and "Cargo.lock" files, as well
     # as ".cargo/config".
-    RUN_TESTS = any(
-        x.suffix in [".rs", ".toml", ".lock", "config"] for x in changed_files
-    )
+    #RUN_TESTS = any(
+    #    x.suffix in [".rs", ".toml", ".lock", "config"] for x in changed_files
+    #)
 
 group_steps = []
 
