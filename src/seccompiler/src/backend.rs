@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::convert::{Into, TryFrom, TryInto};
 
 use serde::{Deserialize, Deserializer};
+use utils::syscall;
 
 use crate::common::{sock_filter, BpfProgram, BPF_MAX_LEN};
 
@@ -758,19 +759,58 @@ impl TryInto<BpfProgram> for SeccompFilter {
         let mut filter_len = 1;
         accumulator.push(EXAMINE_SYSCALL());
 
+        /* let sendmsg = self.rules[&46].clone();
+        let recvmsg = self.rules[&47].clone();
+
+        SeccompFilter::append_syscall_chain(
+            46,
+            sendmsg,
+            u32::from(self.default_action.clone()),
+            &mut accumulator,
+            &mut filter_len,
+        )?;
+
+        SeccompFilter::append_syscall_chain(
+            47,
+            recvmsg,
+            u32::from(self.default_action.clone()),
+            &mut accumulator,
+            &mut filter_len,
+        )?; */
+
         // Orders syscalls by priority, the highest number represents the highest priority.
+        let rules_copy = self.rules.clone();
         let mut iter = self.rules.into_iter();
 
         // For each syscall adds its rule chain to the filter.
-        let default_action = u32::from(self.default_action);
+        let default_action = u32::from(self.default_action).clone();
         iter.try_for_each(|(syscall_number, chain)| {
-            SeccompFilter::append_syscall_chain(
-                syscall_number,
-                chain,
-                default_action,
-                &mut accumulator,
-                &mut filter_len,
-            )
+            if syscall_number != 46 && syscall_number != 47 {
+                Ok(())
+            } else {
+                SeccompFilter::append_syscall_chain(
+                    syscall_number,
+                    chain,
+                    default_action,
+                    &mut accumulator,
+                    &mut filter_len,
+                )
+            }
+        })?;
+
+        let mut iter = rules_copy.into_iter();
+        iter.try_for_each(|(syscall_number, chain)| {
+            if syscall_number == 46 || syscall_number == 47 {
+                Ok(())
+            } else {
+                SeccompFilter::append_syscall_chain(
+                    syscall_number,
+                    chain,
+                    default_action,
+                    &mut accumulator,
+                    &mut filter_len,
+                )
+            }
         })?;
 
         // The default action is once again appended, it is reached if all syscall number
