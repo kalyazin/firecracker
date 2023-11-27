@@ -444,10 +444,6 @@
             {
                 "syscall": "inotify_add_watch",
                 "comment": "Used by vhost-user frontend to communicate with the backend"
-            },
-            {
-                "syscall": "inotify_init",
-                "comment": "Used by vhost-user frontend to read response from the backend"
             }
         ]
     },
