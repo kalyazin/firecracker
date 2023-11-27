@@ -695,6 +695,8 @@ cmd_test() {
 
     say "Starting test run ..."
 
+    echo 0 > /proc/sys/net/core/bpf_jit_enable
+
     test_script="./tools/test.sh"
 
     if [ $do_ab_test -eq 1 ]; then
@@ -719,6 +721,8 @@ cmd_test() {
         $test_script "$@"
 
     ret=$?
+
+    echo 1 > /proc/sys/net/core/bpf_jit_enable
 
     say "Finished test run ..."
 
