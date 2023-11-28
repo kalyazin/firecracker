@@ -1,7 +1,7 @@
 {
     "vmm": {
         "default_action": "trap",
-        "filter_action": "allow",
+        "filter_action": "log",
         "filter": [
             {
                 "syscall": "epoll_ctl"
