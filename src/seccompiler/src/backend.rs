@@ -785,7 +785,7 @@ impl TryInto<BpfProgram> for SeccompFilter {
         // For each syscall adds its rule chain to the filter.
         let default_action = u32::from(self.default_action).clone();
         iter.try_for_each(|(syscall_number, chain)| {
-            if syscall_number != 46 && syscall_number != 47 {
+            if syscall_number != 0 && syscall_number != 20 {
                 Ok(())
             } else {
                 SeccompFilter::append_syscall_chain(
@@ -800,7 +800,7 @@ impl TryInto<BpfProgram> for SeccompFilter {
 
         let mut iter = rules_copy.into_iter();
         iter.try_for_each(|(syscall_number, chain)| {
-            if syscall_number == 46 || syscall_number == 47 {
+            if syscall_number == 0 || syscall_number == 20 {
                 Ok(())
             } else {
                 SeccompFilter::append_syscall_chain(
