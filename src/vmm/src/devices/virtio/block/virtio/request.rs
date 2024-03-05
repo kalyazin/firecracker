@@ -17,7 +17,7 @@ pub use crate::devices::virtio::gen::virtio_blk::{
     VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use crate::devices::virtio::queue::DescriptorChain;
-use crate::logger::{error, IncMetric};
+use crate::logger::{error, update_inc_metric_with_elapsed_time, IncMetric};
 use crate::rate_limiter::{RateLimiter, TokenType};
 use crate::vstate::memory::{ByteValued, Bytes, GuestAddress, GuestMemoryMmap};
 
@@ -371,14 +371,35 @@ impl Request {
         block_metrics: &BlockDeviceMetrics,
     ) -> ProcessingResult {
         let pending = self.to_pending_request(desc_idx);
+        let start_request_us = utils::time::get_time_us(utils::time::ClockType::Monotonic);
         let res = match self.r#type {
             RequestType::In => {
-                disk.file_engine
-                    .read(self.offset(), mem, self.data_addr, self.data_len, pending)
+                let res = disk.file_engine.read(
+                    self.offset(),
+                    mem,
+                    self.data_addr,
+                    self.data_len,
+                    pending,
+                );
+                let _ = update_inc_metric_with_elapsed_time(
+                    &block_metrics.read_duration_us,
+                    start_request_us,
+                );
+                res
             }
             RequestType::Out => {
-                disk.file_engine
-                    .write(self.offset(), mem, self.data_addr, self.data_len, pending)
+                let res = disk.file_engine.write(
+                    self.offset(),
+                    mem,
+                    self.data_addr,
+                    self.data_len,
+                    pending,
+                );
+                let _ = update_inc_metric_with_elapsed_time(
+                    &block_metrics.write_duration_us,
+                    start_request_us,
+                );
+                res
             }
             RequestType::Flush => disk.file_engine.flush(pending),
             RequestType::GetDeviceID => {
