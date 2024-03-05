@@ -38,7 +38,7 @@ use crate::devices::virtio::{ActivateError, TYPE_NET};
 use crate::devices::{report_net_event_fail, DeviceError};
 use crate::dumbo::pdu::arp::ETH_IPV4_FRAME_LEN;
 use crate::dumbo::pdu::ethernet::{EthernetFrame, PAYLOAD_OFFSET};
-use crate::logger::{IncMetric, METRICS};
+use crate::logger::{update_inc_metric_with_elapsed_time, IncMetric, METRICS};
 use crate::mmds::data_store::Mmds;
 use crate::mmds::ns::MmdsNetworkStack;
 use crate::rate_limiter::{BucketUpdate, RateLimiter, TokenType};
@@ -490,6 +490,7 @@ impl Net {
             });
         }
 
+        let start_request_us = utils::time::get_time_us(utils::time::ClockType::Monotonic);
         match Self::write_tap(tap, frame_iovec) {
             Ok(_) => {
                 let len = frame_iovec.len() as u64;
@@ -502,6 +503,10 @@ impl Net {
                 net_metrics.tap_write_fails.inc();
             }
         };
+        let _ = update_inc_metric_with_elapsed_time(
+            &net_metrics.tap_write_duration_us,
+            start_request_us,
+        );
         Ok(false)
     }
 
@@ -519,7 +524,13 @@ impl Net {
             }
         }
 
-        self.read_tap().map_err(NetError::IO)
+        let start_request_us = utils::time::get_time_us(utils::time::ClockType::Monotonic);
+        let res = self.read_tap().map_err(NetError::IO);
+        let _ = update_inc_metric_with_elapsed_time(
+            &self.metrics.tap_read_duration_us,
+            start_request_us,
+        );
+        res
     }
 
     fn process_rx(&mut self) -> Result<(), DeviceError> {
@@ -591,6 +602,9 @@ impl Net {
         let tx_queue = &mut self.queues[TX_INDEX];
 
         while let Some(head) = tx_queue.pop_or_enable_notification(mem) {
+            self.metrics
+                .tx_remaining_reqs_count
+                .add(tx_queue.len(mem).into());
             let head_index = head.index;
             // Parse IoVecBuffer from descriptor head
             let buffer = match IoVecBuffer::from_descriptor_chain(head) {

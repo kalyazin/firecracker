@@ -184,6 +184,10 @@ pub struct NetDeviceMetrics {
     pub tap_read_fails: SharedIncMetric,
     /// Number of times writing to TAP failed.
     pub tap_write_fails: SharedIncMetric,
+    /// Duration of all tap read operations.
+    pub tap_read_duration_us: SharedIncMetric,
+    /// Duration of all tap write operations.
+    pub tap_write_duration_us: SharedIncMetric,
     /// Number of transmitted bytes.
     pub tx_bytes_count: SharedIncMetric,
     /// Number of malformed TX frames.
@@ -204,6 +208,8 @@ pub struct NetDeviceMetrics {
     pub tx_rate_limiter_throttled: SharedIncMetric,
     /// Number of packets with a spoofed mac, sent by the guest.
     pub tx_spoofed_mac_count: SharedIncMetric,
+    /// Number of remaining requests in the TX queue.
+    pub tx_remaining_reqs_count: SharedIncMetric,
 }
 
 impl NetDeviceMetrics {
@@ -239,6 +245,10 @@ impl NetDeviceMetrics {
         self.rx_count.add(other.rx_count.fetch_diff());
         self.tap_read_fails.add(other.tap_read_fails.fetch_diff());
         self.tap_write_fails.add(other.tap_write_fails.fetch_diff());
+        self.tap_read_duration_us
+            .add(other.tap_read_duration_us.fetch_diff());
+        self.tap_write_duration_us
+            .add(other.tap_write_duration_us.fetch_diff());
         self.tx_bytes_count.add(other.tx_bytes_count.fetch_diff());
         self.tx_malformed_frames
             .add(other.tx_malformed_frames.fetch_diff());
@@ -256,6 +266,8 @@ impl NetDeviceMetrics {
             .add(other.tx_rate_limiter_throttled.fetch_diff());
         self.tx_spoofed_mac_count
             .add(other.tx_spoofed_mac_count.fetch_diff());
+        self.tx_remaining_reqs_count
+            .add(other.tx_remaining_reqs_count.fetch_diff());
     }
 }
 

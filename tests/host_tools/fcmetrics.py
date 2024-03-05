@@ -130,6 +130,8 @@ def validate_fc_metrics(metrics):
             "rx_count",
             "tap_read_fails",
             "tap_write_fails",
+            "tap_read_duration_us",
+            "tap_write_duration_us",
             "tx_bytes_count",
             "tx_malformed_frames",
             "tx_fails",
@@ -140,6 +142,7 @@ def validate_fc_metrics(metrics):
             "tx_rate_limiter_event_count",
             "tx_rate_limiter_throttled",
             "tx_spoofed_mac_count",
+            "tx_remanining_reqs_count",
         ],
         "patch_api_requests": [
             "drive_count",
