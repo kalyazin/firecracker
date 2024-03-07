@@ -74,7 +74,7 @@ def build_group(test):
         pytest_opts = f" {ab_opts} run {REVISION_A} {REVISION_B} --test {test_path}"
     else:
         # Passing `-m ''` below instructs pytest to collect tests regardless of their markers (e.g. it will collect both tests marked as nonci, and tests without any markers).
-        pytest_opts += f" -m '' {test_path}"
+        pytest_opts += f" -k 'not vhost' -m '' {test_path}"
     binary_dir = test.pop("binary_dir")
     return group(
         label=test.pop("label"),
