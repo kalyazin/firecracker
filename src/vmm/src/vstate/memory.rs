@@ -358,6 +358,7 @@ fn create_memfd(
     let mem_size = size << 20;
     // Create a memfd.
     let opts = memfd::MemfdOptions::default()
+        .close_on_exec(true)
         .hugetlb(hugetlb_size)
         .allow_sealing(true);
     let mem_file = opts.create("guest_mem").map_err(MemoryError::Memfd)?;
