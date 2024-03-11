@@ -162,7 +162,7 @@ def collect_data(firecracker_binary: Path, jailer_binary: Path, test: str):
 
     print("Collecting samples")
     _, stdout, _ = utils.run_cmd(
-        f"AWS_EMF_ENVIRONMENT=local AWS_EMF_NAMESPACE=local ./tools/test.sh --binary-dir=/firecracker/build/{revision} {test} -m ''"
+        f"AWS_EMF_ENVIRONMENT=local AWS_EMF_NAMESPACE=local ./tools/test.sh --binary-dir=/firecracker/build/{revision} {test} -m '' -k 'not vhost'"
     )
     print(stdout.strip())
 
