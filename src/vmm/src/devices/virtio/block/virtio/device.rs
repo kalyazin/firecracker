@@ -45,9 +45,9 @@ use crate::vstate::memory::GuestMemoryMmap;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum FileEngineType {
     /// Use an Async engine, based on io_uring.
+    #[default]
     Async,
     /// Use a Sync engine, based on blocking system calls.
-    #[default]
     Sync,
 }
 
