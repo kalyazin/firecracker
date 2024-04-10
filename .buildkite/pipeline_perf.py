@@ -68,7 +68,7 @@ def build_group(test):
     test_path = test.pop("test_path")
     ab_opts = test.pop("ab_opts", "")
     devtool_opts += " --performance"
-    pytest_opts = ""
+    pytest_opts = " -s"
     if REVISION_A:
         devtool_opts += " --ab"
         pytest_opts = f" {ab_opts} run {REVISION_A} {REVISION_B} --test {test_path}"

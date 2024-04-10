@@ -6,7 +6,9 @@
 use std::io;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::info;
 use serde::{Deserialize, Serialize};
 use utils::net::mac::MacAddr;
 
@@ -30,6 +32,17 @@ use crate::vstate::memory::GuestMemoryMmap;
 pub struct NetConfigSpaceState {
     guest_mac: Option<MacAddr>,
 }
+
+fn time() -> u128 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+
+    // Convert to microseconds
+    let microseconds = since_the_epoch.as_micros();
+
+    microseconds
+}
+
 
 /// Information about the network device that are saved
 /// at snapshot.
@@ -101,6 +114,8 @@ impl Persist<'_> for Net {
             tx_rate_limiter,
         )?;
 
+        info!("step n.1 {}", time());
+
         // We trust the MMIODeviceManager::restore to pass us an MMDS data store reference if
         // there is at least one net device having the MMDS NS present and/or the mmds version was
         // persisted in the snapshot.
@@ -118,6 +133,8 @@ impl Persist<'_> for Net {
             );
         }
 
+        info!("step n.2 {}", time());
+
         net.queues = state.virtio_state.build_queues_checked(
             &constructor_args.mem,
             TYPE_NET,
@@ -131,6 +148,8 @@ impl Persist<'_> for Net {
         if state.virtio_state.activated {
             net.device_state = DeviceState::Activated(constructor_args.mem);
         }
+
+        info!("step n.3 {}", time());
 
         Ok(net)
     }

@@ -13,7 +13,7 @@ from framework.microvm import Microvm
 from host_tools.fcmetrics import FCMetricsMonitor
 
 USEC_IN_MSEC = 1000
-ITERATIONS = 30
+ITERATIONS = 1
 
 
 @lru_cache
@@ -111,6 +111,7 @@ class SnapshotRestoreTest:
             values.append(value)
             fcmetrics.stop()
             microvm.kill()
+            print(f"{microvm.log_data}")
 
         snapshot.delete()
         return values

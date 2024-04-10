@@ -8,6 +8,7 @@ use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::io::{self, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use event_manager::{MutEventSubscriber, SubscriberOps};
 use libc::EFD_NONBLOCK;
@@ -53,7 +54,7 @@ use crate::devices::virtio::net::Net;
 use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::vsock::{Vsock, VsockUnixBackend};
 use crate::devices::BusDevice;
-use crate::logger::{debug, error};
+use crate::logger::{debug, error, info};
 use crate::persist::{MicrovmState, MicrovmStateError};
 use crate::resources::VmResources;
 use crate::snapshot::Persist;
@@ -147,18 +148,27 @@ fn create_vmm_and_vcpus(
     let mut vm = Vm::new(kvm_capabilities)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
+    info!("step 1.0 {}", time());
     vm.memory_init(&guest_memory, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
+
+    info!("step 1.1 {}", time());
 
     let vcpus_exit_evt = EventFd::new(libc::EFD_NONBLOCK)
         .map_err(VmmError::EventFd)
         .map_err(Internal)?;
 
+    info!("step 1.2 {}", time());
+
     let resource_allocator = ResourceAllocator::new()?;
+
+    info!("step 1.3 {}", time());
 
     // Instantiate the MMIO device manager.
     let mmio_device_manager = MMIODeviceManager::new();
+
+    info!("step 1.4 {}", time());
 
     // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
     // while on aarch64 we need to do it the other way around.
@@ -427,6 +437,16 @@ pub enum BuildMicrovmFromSnapshotError {
     SeccompFiltersInternal(#[from] seccompiler::InstallationError),
 }
 
+fn time() -> u128 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+
+    // Convert to microseconds
+    let microseconds = since_the_epoch.as_micros();
+
+    microseconds
+}
+
 /// Builds and starts a microVM based on the provided MicrovmState.
 ///
 /// An `Arc` reference of the built `Vmm` is also plugged in the `EventManager`, while another
@@ -443,6 +463,7 @@ pub fn build_microvm_from_snapshot(
 ) -> Result<Arc<Mutex<Vmm>>, BuildMicrovmFromSnapshotError> {
     // Build Vmm.
     debug!("event_start: build microvm from snapshot");
+    info!("step 1.0 {}", time());
     let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
         instance_info,
         event_manager,
@@ -453,6 +474,7 @@ pub fn build_microvm_from_snapshot(
         microvm_state.vm_state.kvm_cap_modifiers.clone(),
     )?;
 
+    info!("step 2.0 {}", time());
     #[cfg(target_arch = "x86_64")]
     {
         // Scale TSC to match, extract the TSC freq from the state if specified
@@ -480,7 +502,7 @@ pub fn build_microvm_from_snapshot(
         // Restore kvm vm state.
         vmm.vm.restore_state(&mpidrs, &microvm_state.vm_state)?;
     }
-
+    info!("step 3.0 {}", time());
     #[cfg(target_arch = "x86_64")]
     for (vcpu, state) in vcpus.iter_mut().zip(microvm_state.vcpu_states.iter()) {
         vcpu.kvm_vcpu
@@ -489,13 +511,16 @@ pub fn build_microvm_from_snapshot(
             .map_err(BuildMicrovmFromSnapshotError::RestoreVcpus)?;
     }
 
+    info!("step 4.0 {}", time());
     // Restore kvm vm state.
     #[cfg(target_arch = "x86_64")]
     vmm.vm.restore_state(&microvm_state.vm_state)?;
 
+    info!("step 5.0 {}", time());
     // Restore the boot source config paths.
     vm_resources.set_boot_source_config(microvm_state.vm_info.boot_source);
 
+    info!("step 6.0 {}", time());
     // Restore devices states.
     let mmio_ctor_args = MMIODevManagerConstructorArgs {
         mem: guest_memory,
@@ -506,11 +531,13 @@ pub fn build_microvm_from_snapshot(
         instance_id: &instance_info.id,
     };
 
+    info!("step 7.0 {}", time());
     vmm.mmio_device_manager =
         MMIODeviceManager::restore(mmio_ctor_args, &microvm_state.device_states)
             .map_err(MicrovmStateError::RestoreDevices)?;
     vmm.emulate_serial_init()?;
 
+    info!("step 8.0 {}", time());
     // Move vcpus to their own threads and start their state machine in the 'Paused' state.
     vmm.start_vcpus(
         vcpus,
@@ -520,9 +547,11 @@ pub fn build_microvm_from_snapshot(
             .clone(),
     )?;
 
+    info!("step 9.0 {}", time());
     let vmm = Arc::new(Mutex::new(vmm));
     event_manager.add_subscriber(vmm.clone());
 
+    info!("step 10. {}", time());
     // Load seccomp filters for the VMM thread.
     // Keep this as the last step of the building process.
     seccompiler::apply_filter(
@@ -530,6 +559,7 @@ pub fn build_microvm_from_snapshot(
             .get("vmm")
             .ok_or(BuildMicrovmFromSnapshotError::MissingVmmSeccompFilters)?,
     )?;
+    info!("step 11. {}", time());
     debug!("event_end: build microvm from snapshot");
 
     Ok(vmm)

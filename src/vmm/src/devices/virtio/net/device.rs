@@ -11,10 +11,11 @@ use std::io::Write;
 use std::net::Ipv4Addr;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{cmp, mem};
 
 use libc::EAGAIN;
-use log::{error, warn};
+use log::{error, warn, info};
 use utils::eventfd::EventFd;
 use utils::net::mac::MacAddr;
 use utils::u64_to_usize;
@@ -45,6 +46,16 @@ use crate::rate_limiter::{BucketUpdate, RateLimiter, TokenType};
 use crate::vstate::memory::{ByteValued, Bytes, GuestMemoryMmap};
 
 const FRAME_HEADER_MAX_LEN: usize = PAYLOAD_OFFSET + ETH_IPV4_FRAME_LEN;
+
+fn time() -> u128 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+
+    // Convert to microseconds
+    let microseconds = since_the_epoch.as_micros();
+
+    microseconds
+}
 
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
 enum FrontendError {
@@ -208,15 +219,20 @@ impl Net {
         rx_rate_limiter: RateLimiter,
         tx_rate_limiter: RateLimiter,
     ) -> Result<Self, NetError> {
+        info!("step i.1 {}", time());
         let tap = Tap::open_named(tap_if_name).map_err(NetError::TapOpen)?;
 
+        info!("step i.2 {}", time());
         // Set offload flags to match the virtio features below.
         tap.set_offload(gen::TUN_F_CSUM | gen::TUN_F_UFO | gen::TUN_F_TSO4 | gen::TUN_F_TSO6)
             .map_err(NetError::TapSetOffload)?;
 
+        info!("step i.3 {}", time());
         let vnet_hdr_size = i32::try_from(vnet_hdr_len()).unwrap();
         tap.set_vnet_hdr_size(vnet_hdr_size)
             .map_err(NetError::TapSetVnetHdrSize)?;
+
+        info!("step i.4 {}", time());
 
         Self::new_with_tap(id, tap, guest_mac, rx_rate_limiter, tx_rate_limiter)
     }

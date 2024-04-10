@@ -5,10 +5,11 @@
 
 use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use event_manager::{MutEventSubscriber, SubscriberOps};
 use kvm_ioctls::VmFd;
-use log::{error, warn};
+use log::{error, warn, info};
 use serde::{Deserialize, Serialize};
 use vm_allocator::AllocPolicy;
 
@@ -45,6 +46,16 @@ use crate::snapshot::Persist;
 use crate::vmm_config::mmds::MmdsConfigError;
 use crate::vstate::memory::GuestMemoryMmap;
 use crate::EventManager;
+
+fn time() -> u128 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+
+    // Convert to microseconds
+    let microseconds = since_the_epoch.as_micros();
+
+    microseconds
+}
 
 /// Errors for (de)serialization of the MMIO device manager.
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
@@ -414,6 +425,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             }
         }
 
+        info!("step 7.1 {}", time());
         let mut restore_helper = |device: Arc<Mutex<dyn VirtioDevice>>,
                                   is_vhost_user: bool,
                                   as_subscriber: Arc<Mutex<dyn MutEventSubscriber>>,
@@ -457,6 +469,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             Ok(())
         };
 
+        info!("step 7.2 {}", time());
+
         if let Some(balloon_state) = &state.balloon_device {
             let device = Arc::new(Mutex::new(Balloon::restore(
                 BalloonConstructorArgs { mem: mem.clone() },
@@ -477,6 +491,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 constructor_args.event_manager,
             )?;
         }
+
+        info!("step 7.3 {}", time());
 
         for block_state in &state.block_devices {
             let device = Arc::new(Mutex::new(Block::restore(
@@ -499,6 +515,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             )?;
         }
 
+        info!("step 7.4 {}", time());
+
         // If the snapshot has the mmds version persisted, initialise the data store with it.
         if let Some(mmds_version) = &state.mmds_version {
             constructor_args
@@ -515,7 +533,10 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             constructor_args.vm_resources.mmds_or_default();
         }
 
+        info!("step 7.5 {}", time());
+
         for net_state in &state.net_devices {
+            info!("step m.1 {}", time());
             let device = Arc::new(Mutex::new(Net::restore(
                 NetConstructorArgs {
                     mem: mem.clone(),
@@ -528,6 +549,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 },
                 &net_state.device_state,
             )?));
+            info!("step m.2 {}", time());
 
             constructor_args
                 .vm_resources
@@ -542,7 +564,10 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 &net_state.device_info,
                 constructor_args.event_manager,
             )?;
+            info!("step m.3 {}", time());
         }
+
+        info!("step 7.6 {}", time());
 
         if let Some(vsock_state) = &state.vsock_device {
             let ctor_args = VsockUdsConstructorArgs {
@@ -572,6 +597,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
             )?;
         }
 
+        info!("step 7.7 {}", time());
+
         if let Some(entropy_state) = &state.entropy_device {
             let ctor_args = EntropyConstructorArgs::new(mem.clone());
 
@@ -594,6 +621,8 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 constructor_args.event_manager,
             )?;
         }
+
+        info!("step 7.8 {}", time());
 
         Ok(dev_manager)
     }
