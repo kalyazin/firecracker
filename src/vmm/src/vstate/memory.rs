@@ -7,7 +7,7 @@
 
 use std::fs::File;
 use std::io::SeekFrom;
-use std::os::fd::{AsRawFd};
+use std::os::fd::AsRawFd;
 use std::ptr::null_mut;
 
 use kvm_ioctls::VmFd;
@@ -172,7 +172,8 @@ impl GuestMemoryExtension for GuestMemoryMmap {
         associated_vm: &VmFd,
         mem_size_mib: u64,
     ) -> Result<(Self, File), MemoryError> {
-        let guest_memfd = crate::vstate::guest_memfd::create_guest_memfd(associated_vm, mem_size_mib << 20)?;
+        let guest_memfd =
+            crate::vstate::guest_memfd::create_guest_memfd(associated_vm, mem_size_mib << 20)?;
 
         let mut offset: u64 = 0;
         let regions = crate::arch::arch_memory_regions((mem_size_mib as usize) << 20)

@@ -9,13 +9,13 @@
 use std::fmt;
 use std::fs::File;
 
+use kvm_bindings::KVM_API_VERSION;
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
     kvm_clock_data, kvm_irqchip, kvm_pit_config, kvm_pit_state2, CpuId, MsrList,
     KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_bindings::KVM_API_VERSION;
 use kvm_ioctls::{Kvm, VmFd};
 use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "x86_64")]

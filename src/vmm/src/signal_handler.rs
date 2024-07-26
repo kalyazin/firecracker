@@ -1,9 +1,7 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use libc::{
-    c_int, c_void, siginfo_t, SIGBUS, SIGHUP, SIGILL, SIGPIPE, SIGSYS, SIGXCPU, SIGXFSZ,
-};
+use libc::{c_int, c_void, siginfo_t, SIGBUS, SIGHUP, SIGILL, SIGPIPE, SIGSYS, SIGXCPU, SIGXFSZ};
 use log::error;
 use utils::signal::register_signal_handler;
 

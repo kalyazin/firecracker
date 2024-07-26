@@ -595,6 +595,7 @@ dependencies = [
  "cargo_toml",
  "displaydoc",
  "event-manager",
+ "kvm-ioctls",
  "libc",
  "log-instrument",
  "micro_http",

@@ -7,9 +7,11 @@
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::io::{self, Seek, SeekFrom};
+use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use event_manager::{MutEventSubscriber, SubscriberOps};
+use kvm_bindings::kvm_enable_cap;
 use libc::EFD_NONBLOCK;
 use linux_loader::cmdline::Cmdline as LoaderKernelCmdline;
 #[cfg(target_arch = "x86_64")]
@@ -62,7 +64,7 @@ use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::vsock::{Vsock, VsockUnixBackend};
 use crate::devices::BusDevice;
 use crate::logger::{debug, error};
-use crate::persist::{MicrovmState, MicrovmStateError};
+use crate::persist::{GuestRegionUffdMapping, MicrovmState, MicrovmStateError};
 use crate::resources::VmResources;
 use crate::snapshot::Persist;
 use crate::vmm_config::boot_source::BootConfig;
@@ -162,16 +164,15 @@ fn create_vmm_and_vcpus(
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
-    let (private_memory, guest_memfd) =
-        GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib)
-            .map_err(StartMicrovmError::GuestMemory)?;
+    let (private_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib)
+        .map_err(StartMicrovmError::GuestMemory)?;
 
     vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
-    // leak the fd to avoid it getting closed by the `File` destructor.
-    std::mem::forget(guest_memfd);
+    // We don't want to leak it.
+    // std::mem::forget(guest_memfd);
 
     let vcpus_exit_evt = EventFd::new(libc::EFD_NONBLOCK)
         .map_err(VmmError::EventFd)
@@ -243,6 +244,8 @@ fn create_vmm_and_vcpus(
         pio_device_manager,
         #[cfg(target_arch = "x86_64")]
         acpi_device_manager,
+        guest_memfd,
+        eventfd: None,
     };
 
     Ok((vmm, vcpus))
@@ -460,6 +463,54 @@ pub fn build_microvm_from_snapshot(
         microvm_state.vm_state.kvm_cap_modifiers.clone(),
     )?;
 
+    let mem_state = &microvm_state.memory_state;
+
+    let mut backend_mappings = Vec::with_capacity(guest_memory.num_regions());
+    for (mem_region, state_region) in guest_memory.iter().zip(mem_state.regions.iter()) {
+        backend_mappings.push(GuestRegionUffdMapping {
+            base_host_virt_addr: mem_region.as_ptr() as u64,
+            size: mem_region.size(),
+            offset: state_region.offset,
+            page_size_kib: 4096,
+        });
+    }
+
+    // Create eventfd and cache it in VMM, so it isn't GC'ed.
+    let eventfd = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+    vmm.eventfd = Some(eventfd.as_raw_fd());
+
+    // Guest_memfd
+    let guest_memfd = &vmm.guest_memfd;
+
+    // Enable capability. This sets the eventfd to KVM.
+    use std::os::fd::AsRawFd;
+    let cap: kvm_enable_cap = kvm_enable_cap {
+        cap: 236,
+        args: [1, eventfd.as_raw_fd() as u64, 0, 0],
+        ..Default::default()
+    };
+    vmm.vm.fd().enable_cap(&cap).unwrap();
+
+    // FIXME: Hardcoding the UDS socket path as it's awkward to bring it here.
+    let uds_sock = "/mnt/host/uffd.sock";
+    let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
+    let socket = UnixStream::connect(uds_sock).unwrap();
+    use utils::sock_ctrl_msg::ScmSocket;
+
+    // Send all FDs to the UFFD handler.
+    socket
+        .send_with_fds(
+            &[backend_mappings_json.as_bytes()],
+            &[
+                eventfd.as_raw_fd(),
+                guest_memfd.as_raw_fd(),
+                vmm.vm.fd().as_raw_fd(),
+            ],
+        )
+        .unwrap();
+
+    vmm.set_guest_memory_private()?;
+
     #[cfg(target_arch = "x86_64")]
     {
         // Scale TSC to match, extract the TSC freq from the state if specified
@@ -498,7 +549,7 @@ pub fn build_microvm_from_snapshot(
 
     // Restore devices states.
     let mmio_ctor_args = MMIODevManagerConstructorArgs {
-        mem: &guest_memory,
+        mem: &vmm.guest_memory,
         vm: vmm.vm.fd(),
         event_manager,
         resource_allocator: &mut vmm.resource_allocator,
@@ -514,7 +565,7 @@ pub fn build_microvm_from_snapshot(
     #[cfg(target_arch = "x86_64")]
     {
         let acpi_ctor_args = ACPIDeviceManagerConstructorArgs {
-            mem: &guest_memory,
+            mem: &vmm.guest_memory,
             resource_allocator: &mut vmm.resource_allocator,
             vm: vmm.vm.fd(),
         };

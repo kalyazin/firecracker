@@ -111,6 +111,7 @@ pub mod vmm_config;
 pub mod vstate;
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::io;
 use std::os::unix::io::AsRawFd;
 use std::sync::mpsc::RecvTimeoutError;
@@ -308,7 +309,8 @@ pub struct Vmm {
     shutdown_exit_code: Option<FcExitCode>,
 
     // Guest VM core resources.
-    vm: Vm,
+    /// VM
+    pub vm: Vm,
     guest_memory: GuestMemoryMmap,
     // Save UFFD in order to keep it open in the Firecracker process, as well.
     // Since this field is never read again, we need to allow `dead_code`.
@@ -326,6 +328,10 @@ pub struct Vmm {
     pio_device_manager: PortIODeviceManager,
     #[cfg(target_arch = "x86_64")]
     acpi_device_manager: ACPIDeviceManager,
+    /// guest_memfd
+    pub guest_memfd: File,
+    /// eventfd
+    pub eventfd: Option<i32>,
 }
 
 impl Vmm {

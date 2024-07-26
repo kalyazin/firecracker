@@ -6,16 +6,13 @@
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use seccompiler::BpfThreadMap;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use userfaultfd::{FeatureFlags, Uffd, UffdBuilder};
-use utils::sock_ctrl_msg::ScmSocket;
+use userfaultfd::Uffd;
 use utils::u64_to_usize;
 
 #[cfg(target_arch = "aarch64")]
@@ -260,13 +257,19 @@ fn snapshot_memory_to_file(
                 .map_err(Memory)
         }
         SnapshotType::Full => {
-            let dump_res = vmm.guest_memory().dump(&mut file).map_err(Memory);
-            if dump_res.is_ok() {
-                vmm.reset_dirty_bitmap();
-                vmm.guest_memory().reset_dirty();
-            }
+            // FIXME: hardcoded memory size.
+            let file_length = 128 * 1024 * 1024;
+            let mem = vmm.guest_memory();
+            let _ = mem
+                .get_slice(vm_memory::GuestAddress(0), file_length as usize)
+                .and_then(|slice| {
+                    let mut vec = vec![0u8; slice.len()];
+                    slice.copy_to(vec.as_mut_slice());
+                    Ok(file.write_all(vec.as_ref()))
+                })
+                .unwrap();
 
-            dump_res
+            Ok(())
         }
     }?;
     file.flush()
@@ -523,38 +526,16 @@ pub enum GuestMemoryFromUffdError {
 }
 
 fn guest_memory_from_uffd(
-    mem_uds_path: &Path,
+    _mem_uds_path: &Path,
     mem_state: &GuestMemoryState,
     track_dirty_pages: bool,
-    enable_balloon: bool,
+    _enable_balloon: bool,
     huge_pages: HugePageConfig,
 ) -> Result<(GuestMemoryMmap, Option<Uffd>), GuestMemoryFromUffdError> {
-    let (guest_memory, backend_mappings) =
+    let (guest_memory, _backend_mappings) =
         create_guest_memory(mem_state, track_dirty_pages, huge_pages)?;
 
-    let mut uffd_builder = UffdBuilder::new();
-
-    if enable_balloon {
-        // We enable this so that the page fault handler can add logic
-        // for treating madvise(MADV_DONTNEED) events triggerd by balloon inflation.
-        uffd_builder.require_features(FeatureFlags::EVENT_REMOVE);
-    }
-
-    let uffd = uffd_builder
-        .close_on_exec(true)
-        .non_blocking(true)
-        .user_mode_only(false)
-        .create()
-        .map_err(GuestMemoryFromUffdError::Create)?;
-
-    for mem_region in guest_memory.iter() {
-        uffd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
-            .map_err(GuestMemoryFromUffdError::Register)?;
-    }
-
-    send_uffd_handshake(mem_uds_path, &backend_mappings, &uffd)?;
-
-    Ok((guest_memory, Some(uffd)))
+    Ok((guest_memory, None))
 }
 
 fn create_guest_memory(
@@ -574,54 +555,6 @@ fn create_guest_memory(
     }
 
     Ok((guest_memory, backend_mappings))
-}
-
-fn send_uffd_handshake(
-    mem_uds_path: &Path,
-    backend_mappings: &[GuestRegionUffdMapping],
-    uffd: &impl AsRawFd,
-) -> Result<(), GuestMemoryFromUffdError> {
-    // This is safe to unwrap() because we control the contents of the vector
-    // (i.e GuestRegionUffdMapping entries).
-    let backend_mappings = serde_json::to_string(backend_mappings).unwrap();
-
-    let socket = UnixStream::connect(mem_uds_path)?;
-    socket.send_with_fd(
-        backend_mappings.as_bytes(),
-        // In the happy case we can close the fd since the other process has it open and is
-        // using it to serve us pages.
-        //
-        // The problem is that if other process crashes/exits, firecracker guest memory
-        // will simply revert to anon-mem behavior which would lead to silent errors and
-        // undefined behavior.
-        //
-        // To tackle this scenario, the page fault handler can notify Firecracker of any
-        // crashes/exits. There is no need for Firecracker to explicitly send its process ID.
-        // The external process can obtain Firecracker's PID by calling `getsockopt` with
-        // `libc::SO_PEERCRED` option like so:
-        //
-        // let mut val = libc::ucred { pid: 0, gid: 0, uid: 0 };
-        // let mut ucred_size: u32 = mem::size_of::<libc::ucred>() as u32;
-        // libc::getsockopt(
-        //      socket.as_raw_fd(),
-        //      libc::SOL_SOCKET,
-        //      libc::SO_PEERCRED,
-        //      &mut val as *mut _ as *mut _,
-        //      &mut ucred_size as *mut libc::socklen_t,
-        // );
-        //
-        // Per this linux man page: https://man7.org/linux/man-pages/man7/unix.7.html,
-        // `SO_PEERCRED` returns the credentials (PID, UID and GID) of the peer process
-        // connected to this socket. The returned credentials are those that were in effect
-        // at the time of the `connect` call.
-        //
-        // Moreover, Firecracker holds a copy of the UFFD fd as well, so that even if the
-        // page fault handler process does not tear down Firecracker when necessary, the
-        // uffd will still be alive but with no one to serve faults, leading to guest freeze.
-        uffd.as_raw_fd(),
-    )?;
-
-    Ok(())
 }
 
 #[cfg(test)]

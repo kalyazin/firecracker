@@ -30,6 +30,7 @@ thiserror = "1.0.61"
 timerfd = "1.6.0"
 utils = { path = "../utils" }
 vmm = { path = "../vmm" }
+kvm-ioctls = "0.17.0"
 
 [dev-dependencies]
 cargo_toml = "0.20.2"

@@ -10,7 +10,12 @@ mod uffd_utils;
 use std::fs::File;
 use std::os::unix::net::UnixListener;
 
-use uffd_utils::{MemPageState, Runtime, UffdHandler};
+use uffd_utils::{Runtime, UffdHandler};
+use utils::ioctl::ioctl_with_ref;
+use utils::syscall::SyscallReturnCode;
+use vmm::vstate::guest_memfd::{
+    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+};
 
 fn main() {
     let mut args = std::env::args();
@@ -31,18 +36,36 @@ fn main() {
             .expect("Failed to read uffd_msg")
             .expect("uffd_msg not ready");
 
-        // We expect to receive either a Page Fault or Removed
-        // event (if the balloon device is enabled).
-        match event {
-            userfaultfd::Event::Pagefault { addr, .. } => {
-                uffd_handler.serve_pf(addr.cast(), uffd_handler.page_size)
-            }
-            userfaultfd::Event::Remove { start, end } => uffd_handler.update_mem_state_mappings(
-                start as u64,
-                end as u64,
-                MemPageState::Removed,
-            ),
-            _ => panic!("Unexpected event on userfaultfd"),
+        let gfn = event;
+
+        // println!("about to copy 1 page...");
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                uffd_handler.backing_buffer.offset(4096 * gfn as isize),
+                uffd_handler.guest_memfd_addr.offset(4096 * gfn as isize),
+                4096,
+            )
         }
+        // println!("copied...");
+
+        // println!("about to clear uffd memattr...");
+        let attributes = kvm_memory_attributes {
+            address: 4096 * gfn,
+            size: 4096,
+            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+            ..Default::default()
+        };
+
+        unsafe {
+            SyscallReturnCode(ioctl_with_ref(
+                &uffd_handler.kvm_fd,
+                KVM_SET_MEMORY_ATTRIBUTES(),
+                &attributes,
+            ))
+            .into_empty_result()
+            .unwrap()
+        }
+
+        // println!("cleared.");
     });
 }

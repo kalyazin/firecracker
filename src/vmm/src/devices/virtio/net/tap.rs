@@ -189,7 +189,9 @@ impl Tap {
     pub(crate) fn write_iovec(&mut self, buffer: &IoVecBuffer) -> Result<usize, IoError> {
         let mut buf = vec![0u8; buffer.len() as usize];
         log::error!("My buffer is {:?}", buffer);
-        buffer.read_exact_volatile_at(buf.as_mut_slice(), 0).unwrap();
+        buffer
+            .read_exact_volatile_at(buf.as_mut_slice(), 0)
+            .unwrap();
         log::error!("We copied the data to firecracker userspace: {:?}", buf);
         self.write(buf.as_ref())
     }

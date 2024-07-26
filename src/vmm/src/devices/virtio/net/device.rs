@@ -446,7 +446,7 @@ impl Net {
     ) -> Result<bool, NetError> {
         // Read the frame headers from the IoVecBuffer
         let max_header_len = headers.len();
-            let header_len = frame_iovec
+        let header_len = frame_iovec
             .read_volatile_at(&mut &mut *headers, 0, max_header_len)
             .map_err(|err| {
                 error!("Received malformed TX buffer: {:?}", err);

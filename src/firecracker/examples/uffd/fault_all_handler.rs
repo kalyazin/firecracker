@@ -11,6 +11,11 @@ use std::fs::File;
 use std::os::unix::net::UnixListener;
 
 use uffd_utils::{Runtime, UffdHandler};
+use utils::ioctl::ioctl_with_ref;
+use utils::syscall::SyscallReturnCode;
+use vmm::vstate::guest_memfd::{
+    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+};
 
 fn main() {
     let mut args = std::env::args();
@@ -26,19 +31,46 @@ fn main() {
     let mut runtime = Runtime::new(stream, file);
     runtime.run(|uffd_handler: &mut UffdHandler| {
         // Read an event from the userfaultfd.
-        let event = uffd_handler
+        let _event = uffd_handler
             .read_event()
             .expect("Failed to read uffd_msg")
             .expect("uffd_msg not ready");
 
-        match event {
-            userfaultfd::Event::Pagefault { .. } => {
-                for region in uffd_handler.mem_regions.clone() {
-                    uffd_handler
-                        .serve_pf(region.mapping.base_host_virt_addr as _, region.mapping.size)
-                }
-            }
-            _ => panic!("Unexpected event on userfaultfd"),
+        let sizes: Vec<usize> = uffd_handler
+            .mem_regions
+            .iter()
+            .map(|region| region.mapping.size as usize)
+            .collect();
+        let mem_size = sizes[0];
+
+        println!("about to copy all pages in...");
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                uffd_handler.backing_buffer.offset(0 as isize),
+                uffd_handler.guest_memfd_addr.offset(0 as isize),
+                mem_size,
+            )
         }
+        println!("copied.");
+
+        println!("about to clear uffd memattr for all pages...");
+        let attributes = kvm_memory_attributes {
+            address: 0,
+            size: mem_size as u64,
+            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+            ..Default::default()
+        };
+
+        unsafe {
+            SyscallReturnCode(ioctl_with_ref(
+                &uffd_handler.kvm_fd,
+                KVM_SET_MEMORY_ATTRIBUTES(),
+                &attributes,
+            ))
+            .into_empty_result()
+            .unwrap()
+        }
+
+        println!("cleared.");
     });
 }

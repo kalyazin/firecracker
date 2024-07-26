@@ -10,9 +10,13 @@ use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::ptr;
 
+use kvm_ioctls::VmFd;
+use libc::iovec;
 use serde::{Deserialize, Serialize};
-use userfaultfd::{Error, Event, Uffd};
+use userfaultfd::{Error, Uffd};
+use utils::eventfd::EventFd;
 use utils::sock_ctrl_msg::ScmSocket;
+use vmm::vstate::guest_memfd::read_fault;
 
 // This is the same with the one used in src/vmm.
 /// This describes the mapping between Firecracker base virtual address and offset in the
@@ -52,20 +56,37 @@ pub struct MemRegion {
 pub struct UffdHandler {
     pub mem_regions: Vec<MemRegion>,
     pub page_size: usize,
-    backing_buffer: *const u8,
+    pub backing_buffer: *const u8,
+    // For receiving fault notifications
+    eventfd: EventFd,
+    // For mmapping guest memory
+    guest_memfd: File,
+    // For clearing UFFD memattr
+    pub kvm_fd: VmFd,
     uffd: Uffd,
+    // For copying pages in
+    pub guest_memfd_addr: *mut u8,
 }
 
 impl UffdHandler {
     pub fn from_unix_stream(stream: &UnixStream, backing_buffer: *const u8, size: usize) -> Self {
         let mut message_buf = vec![0u8; 1024];
-        let (bytes_read, file) = stream
-            .recv_with_fd(&mut message_buf[..])
-            .expect("Cannot recv_with_fd");
-        message_buf.resize(bytes_read, 0);
+        use core::ffi::c_void;
+        let mut iovecs = [iovec {
+            iov_base: message_buf.as_mut_ptr() as *mut c_void,
+            iov_len: message_buf.len(),
+        }];
+        let mut fds = [0, 0, 0];
+        let (read_count, _fd_count) =
+            unsafe { stream.recv_with_fds(&mut iovecs[..], &mut fds).unwrap() };
+        message_buf.resize(read_count, 0);
+
+        println!(
+            "received FDs via UDS: {fds:?}, payload: {}",
+            message_buf.len()
+        );
 
         let body = String::from_utf8(message_buf).unwrap();
-        let file = file.expect("Uffd not passed through UDS!");
 
         let mappings = serde_json::from_str::<Vec<GuestRegionUffdMapping>>(&body)
             .expect("Cannot deserialize memory mappings.");
@@ -77,20 +98,66 @@ impl UffdHandler {
         assert_eq!(memsize, size);
         assert!(page_size.is_power_of_two());
 
-        let uffd = unsafe { Uffd::from_raw_fd(file.into_raw_fd()) };
+        // This one is a dummy, not used.
+        let uffd = unsafe { Uffd::from_raw_fd(1000) };
+
+        let eventfd = unsafe { EventFd::from_raw_fd(fds[0].into_raw_fd()) };
+        let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
+
+        // We've no way to construct a real VmFd from scratch as it's in kvm-ioctls repo.
+        pub struct VmFdMy {
+            vm: File,
+            run_size: usize,
+        }
+
+        // We don't care about run_size as we don't use it here.
+        let vmfd_my = VmFdMy {
+            vm: unsafe { File::from_raw_fd(fds[2].into_raw_fd()) },
+            run_size: 0,
+        };
+        let kvm_fd = unsafe { std::mem::transmute::<VmFdMy, VmFd>(vmfd_my) };
 
         let mem_regions = create_mem_regions(&mappings, page_size);
+
+        let sizes: Vec<usize> = mem_regions
+            .iter()
+            .map(|region| region.mapping.size as usize)
+            .collect();
+
+        // # Safety:
+        // File size and fd are valid
+        let ret = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                sizes[0],
+                libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                guest_memfd.as_raw_fd(),
+                0,
+            )
+        };
+        if ret == libc::MAP_FAILED {
+            panic!("mmap on guest_memfd failed");
+        }
+
+        println!("guest_memfd is mmapped.");
 
         Self {
             mem_regions,
             page_size,
             backing_buffer,
+            eventfd,
+            guest_memfd,
+            kvm_fd,
             uffd,
+            guest_memfd_addr: ret.cast(),
         }
     }
 
-    pub fn read_event(&mut self) -> Result<Option<Event>, Error> {
-        self.uffd.read_event()
+    pub fn read_event(&mut self) -> Result<Option<u64>, Error> {
+        let _res = self.eventfd.read().unwrap();
+        let gfn = read_fault(&self.kvm_fd);
+        Ok(Some(gfn))
     }
 
     pub fn update_mem_state_mappings(&mut self, start: u64, end: u64, state: MemPageState) {
@@ -174,7 +241,7 @@ pub struct Runtime {
     backing_file: File,
     backing_memory: *mut u8,
     backing_memory_size: usize,
-    uffds: HashMap<i32, UffdHandler>,
+    eventfds: HashMap<i32, UffdHandler>,
 }
 
 impl Runtime {
@@ -204,7 +271,7 @@ impl Runtime {
             backing_file,
             backing_memory: ret.cast(),
             backing_memory_size,
-            uffds: HashMap::default(),
+            eventfds: HashMap::default(),
         }
     }
 
@@ -243,6 +310,9 @@ impl Runtime {
                     break;
                 }
                 if pollfds[i].revents & libc::POLLIN != 0 {
+                    if pollfds[i].revents & libc::POLLHUP != 0 {
+                        continue;
+                    }
                     nready -= 1;
                     if pollfds[i].fd == self.stream.as_raw_fd() {
                         // Handle new uffd from stream
@@ -252,11 +322,11 @@ impl Runtime {
                             self.backing_memory_size,
                         );
                         pollfds.push(libc::pollfd {
-                            fd: handler.uffd.as_raw_fd(),
+                            fd: handler.eventfd.as_raw_fd(),
                             events: libc::POLLIN,
                             revents: 0,
                         });
-                        self.uffds.insert(handler.uffd.as_raw_fd(), handler);
+                        self.eventfds.insert(handler.eventfd.as_raw_fd(), handler);
 
                         // If connection is closed, we can skip the socket from being polled.
                         if pollfds[i].revents & (libc::POLLRDHUP | libc::POLLHUP) != 0 {
@@ -264,7 +334,7 @@ impl Runtime {
                         }
                     } else {
                         // Handle one of uffd page faults
-                        pf_event_dispatch(self.uffds.get_mut(&pollfds[i].fd).unwrap());
+                        pf_event_dispatch(self.eventfds.get_mut(&pollfds[i].fd).unwrap());
                     }
                 }
             }
@@ -353,7 +423,7 @@ mod tests {
         // wait for the runtime thread to process message
         std::thread::sleep(std::time::Duration::from_millis(100));
         unsafe {
-            assert_eq!((*runtime_ptr).uffds.len(), 1);
+            assert_eq!((*runtime_ptr).eventfds.len(), 1);
         }
 
         let dummy_file_2 = TempFile::new().unwrap();
@@ -364,7 +434,7 @@ mod tests {
         // wait for the runtime thread to process message
         std::thread::sleep(std::time::Duration::from_millis(100));
         unsafe {
-            assert_eq!((*runtime_ptr).uffds.len(), 2);
+            assert_eq!((*runtime_ptr).eventfds.len(), 2);
         }
 
         // there is no way to properly stop runtime, so
