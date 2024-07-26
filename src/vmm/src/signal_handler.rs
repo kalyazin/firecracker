@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libc::{
-    c_int, c_void, siginfo_t, SIGBUS, SIGHUP, SIGILL, SIGPIPE, SIGSEGV, SIGSYS, SIGXCPU, SIGXFSZ,
+    c_int, c_void, siginfo_t, SIGBUS, SIGHUP, SIGILL, SIGPIPE, SIGSYS, SIGXCPU, SIGXFSZ,
 };
 use log::error;
 use utils::signal::register_signal_handler;
@@ -101,14 +101,6 @@ generate_handler!(
 );
 
 generate_handler!(
-    sigsegv_handler,
-    SIGSEGV,
-    SIGSEGV,
-    METRICS.signals.sigsegv,
-    empty_fn
-);
-
-generate_handler!(
     sigsys_handler,
     SIGSYS,
     BadSyscall,
@@ -162,7 +154,6 @@ pub fn register_signal_handlers() -> utils::errno::Result<()> {
     // signal handler must only do async-signal-safe operations.
     register_signal_handler(SIGSYS, sigsys_handler)?;
     register_signal_handler(SIGBUS, sigbus_handler)?;
-    //register_signal_handler(SIGSEGV, sigsegv_handler)?;
     register_signal_handler(SIGXFSZ, sigxfsz_handler)?;
     register_signal_handler(SIGXCPU, sigxcpu_handler)?;
     register_signal_handler(SIGPIPE, sigpipe_handler)?;
