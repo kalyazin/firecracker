@@ -7,6 +7,7 @@
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::io::{self, Seek, SeekFrom};
+use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
@@ -155,6 +156,7 @@ fn create_vmm_and_vcpus(
     track_dirty_pages: bool,
     vcpu_count: u8,
     kvm_capabilities: Vec<KvmCapability>,
+    uds: Option<UnixStream>,
 ) -> Result<(Vmm, Vec<Vcpu>), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -170,6 +172,8 @@ fn create_vmm_and_vcpus(
     vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
+
+    vm.uds = uds;
 
     // We don't want to leak it.
     // std::mem::forget(guest_memfd);
@@ -283,6 +287,7 @@ pub fn build_microvm_for_boot(
         track_dirty_pages,
         vm_resources.vm_config.vcpu_count,
         cpu_template.kvm_capabilities.clone(),
+        None,
     )?;
 
     let entry_addr = load_kernel(boot_config, &vmm.guest_memory)?;
@@ -451,18 +456,6 @@ pub fn build_microvm_from_snapshot(
     seccomp_filters: &BpfThreadMap,
     vm_resources: &mut VmResources,
 ) -> Result<Arc<Mutex<Vmm>>, BuildMicrovmFromSnapshotError> {
-    // Build Vmm.
-    debug!("event_start: build microvm from snapshot");
-    let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
-        instance_info,
-        event_manager,
-        mem_size_mib(&guest_memory),
-        uffd,
-        vm_resources.vm_config.track_dirty_pages,
-        vm_resources.vm_config.vcpu_count,
-        microvm_state.vm_state.kvm_cap_modifiers.clone(),
-    )?;
-
     let mem_state = &microvm_state.memory_state;
 
     let mut backend_mappings = Vec::with_capacity(guest_memory.num_regions());
@@ -474,6 +467,27 @@ pub fn build_microvm_from_snapshot(
             page_size_kib: 4096,
         });
     }
+
+    // FIXME: Hardcoding the UDS socket path as it's awkward to bring it here.
+    let uds_sock = "/mnt/host/uffd.sock";
+    let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
+    let socket = UnixStream::connect(uds_sock).unwrap();
+    use utils::sock_ctrl_msg::ScmSocket;
+
+    let socket_copy = unsafe { UnixStream::from_raw_fd(socket.as_raw_fd()) };
+
+    // Build Vmm.
+    debug!("event_start: build microvm from snapshot");
+    let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
+        instance_info,
+        event_manager,
+        mem_size_mib(&guest_memory),
+        uffd,
+        vm_resources.vm_config.track_dirty_pages,
+        vm_resources.vm_config.vcpu_count,
+        microvm_state.vm_state.kvm_cap_modifiers.clone(),
+        Some(socket_copy),
+    )?;
 
     // Create eventfd and cache it in VMM, so it isn't GC'ed.
     let eventfd = EventFd::new(libc::EFD_NONBLOCK).unwrap();
@@ -491,12 +505,6 @@ pub fn build_microvm_from_snapshot(
     };
     vmm.vm.fd().enable_cap(&cap).unwrap();
 
-    // FIXME: Hardcoding the UDS socket path as it's awkward to bring it here.
-    let uds_sock = "/mnt/host/uffd.sock";
-    let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
-    let socket = UnixStream::connect(uds_sock).unwrap();
-    use utils::sock_ctrl_msg::ScmSocket;
-
     // Send all FDs to the UFFD handler.
     socket
         .send_with_fds(
@@ -508,6 +516,9 @@ pub fn build_microvm_from_snapshot(
             ],
         )
         .unwrap();
+
+    // We don't want to drop it as we'll use it for fault notifications caused VM exits.
+    std::mem::forget(socket);
 
     vmm.set_guest_memory_private()?;
 

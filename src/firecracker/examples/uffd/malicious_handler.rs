@@ -23,13 +23,18 @@ fn main() {
     let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
     let mut runtime = Runtime::new(stream, file);
-    runtime.run(|uffd_handler: &mut UffdHandler| {
-        // Read an event from the userfaultfd.
-        let _event = uffd_handler
-            .read_event()
-            .expect("Failed to read uffd_msg")
-            .expect("uffd_msg not ready");
+    runtime.run(
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let _event = uffd_handler
+                .read_event()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
 
-        // FIXME: this handler is not functional.
-    });
+            // FIXME: this handler is not functional.
+        },
+        |_uffd_handler: &mut UffdHandler, _gfn: u64| {
+            // FIXME: this handler is not functional.
+        },
+    );
 }

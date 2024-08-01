@@ -6,13 +6,15 @@
 // found in the THIRD-PARTY file.
 
 use std::cell::Cell;
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Barrier};
 use std::{fmt, io, thread};
 
 use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
-use kvm_ioctls::VcpuExit;
+use kvm_ioctls::{VcpuExit, VmFd};
 use libc::{c_int, c_void, siginfo_t};
 use log::{error, info, warn};
 use seccompiler::{BpfProgram, BpfProgramRef};
@@ -81,6 +83,8 @@ type VcpuCell = Cell<Option<*mut Vcpu>>;
 #[error("Failed to spawn vCPU thread: {0}")]
 pub struct StartThreadedError(std::io::Error);
 
+use std::os::unix::net::UnixStream;
+
 /// A wrapper around creating and using a vcpu.
 #[derive(Debug)]
 pub struct Vcpu {
@@ -97,6 +101,12 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     /// The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    /// This is for flipping UFFD memattr after handling faults
+    pub kvm_fd: VmFd,
+
+    /// This is for sending faults to the handler process
+    pub uds: UnixStream,
 }
 
 impl Vcpu {
@@ -194,6 +204,26 @@ impl Vcpu {
         let (response_sender, response_receiver) = channel();
         let kvm_vcpu = KvmVcpu::new(index, vm).unwrap();
 
+        use std::fs::File;
+        pub struct VmFdMy {
+            pub vm: File,
+            pub run_size: usize,
+        }
+
+        // FIXME: this ugliness is to forward the KVM VM fd into the Vcpu
+        let vm_fd_my_ref: &VmFdMy = unsafe { std::mem::transmute::<&VmFd, &VmFdMy>(vm.fd()) };
+        let kvm_fd_copied = VmFdMy {
+            vm: unsafe { std::mem::transmute::<File, File>(vm_fd_my_ref.vm.try_clone().unwrap()) },
+            run_size: vm_fd_my_ref.run_size,
+        };
+        let kvm_fd = unsafe { std::mem::transmute::<VmFdMy, VmFd>(kvm_fd_copied) };
+
+        // FIXME: this is to forward the UDS (UFFD) socket into the Vcpu
+        // FIXME: uncomment for taking a snapshot
+        // let raw = 999;
+        let raw = vm.uds.as_ref().unwrap().as_raw_fd();
+        let stream = unsafe { UnixStream::from_raw_fd(raw) };
+
         Ok(Vcpu {
             exit_evt,
             event_receiver,
@@ -201,6 +231,8 @@ impl Vcpu {
             response_receiver: Some(response_receiver),
             response_sender,
             kvm_vcpu,
+            kvm_fd,
+            uds: stream,
         })
     }
 
@@ -448,7 +480,12 @@ impl Vcpu {
                 // Notify that this KVM_RUN was interrupted.
                 Ok(VcpuEmulation::Interrupted)
             }
-            emulation_result => handle_kvm_exit(&mut self.kvm_vcpu.peripherals, emulation_result),
+            emulation_result => handle_kvm_exit(
+                &mut self.kvm_vcpu.peripherals,
+                emulation_result,
+                &self.kvm_fd,
+                &mut self.uds,
+            ),
         }
     }
 }
@@ -457,6 +494,8 @@ impl Vcpu {
 fn handle_kvm_exit(
     peripherals: &mut Peripherals,
     emulation_result: Result<VcpuExit, errno::Error>,
+    kvm_fd: &VmFd,
+    uds: &mut UnixStream,
 ) -> Result<VcpuEmulation, VcpuError> {
     match emulation_result {
         Ok(run) => match run {
@@ -527,6 +566,41 @@ fn handle_kvm_exit(
                     )))
                 }
             },
+            VcpuExit::MemoryFault {flags: _, gpa, size: _} => {
+                // FIXME: we should be checking that flags contain KVM_MEMORY_EXIT_FLAG_USERFAULT
+                let bytes = gpa.to_be_bytes();
+                let _ret = uds.write_all(&bytes);
+                let ack: &mut [u8; 8] = &mut [0; 8];
+                let _ret = uds.read_exact(ack);
+
+                let gfn = gpa / 4096;
+
+                use utils::ioctl::ioctl_with_ref;
+                use utils::syscall::SyscallReturnCode;
+
+                use crate::vstate::guest_memfd::{
+                    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+                };
+
+                let attributes = kvm_memory_attributes {
+                    address: 4096 * gfn,
+                    size: 4096 as u64,
+                    attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                    ..Default::default()
+                };
+
+                unsafe {
+                    SyscallReturnCode(ioctl_with_ref(
+                        kvm_fd,
+                        KVM_SET_MEMORY_ATTRIBUTES(),
+                        &attributes,
+                    ))
+                    .into_empty_result()
+                    .unwrap()
+                }
+
+                Ok(VcpuEmulation::Handled)
+            }
             arch_specific_reason => {
                 // run specific architecture emulation.
                 peripherals.run_arch_emulation(arch_specific_reason)

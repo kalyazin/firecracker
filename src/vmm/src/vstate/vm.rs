@@ -109,6 +109,8 @@ pub enum RestoreStateError {
     VmError(VmError),
 }
 
+use std::os::unix::net::UnixStream;
+
 /// A wrapper around creating and using a VM.
 #[derive(Debug)]
 pub struct Vm {
@@ -128,6 +130,9 @@ pub struct Vm {
     // On aarch64 we need to keep around the fd obtained by creating the VGIC device.
     #[cfg(target_arch = "aarch64")]
     irqchip_handle: Option<GICDevice>,
+
+    /// UDS (UFFD) for sending fault notifications to the handler process.
+    pub uds: Option<UnixStream>,
 }
 
 /// Contains Vm functions that are usable across CPU architectures
@@ -176,6 +181,7 @@ impl Vm {
                 kvm_cap_modifiers,
                 supported_cpuid,
                 msrs_to_save,
+                uds: None,
             })
         }
     }

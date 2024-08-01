@@ -29,43 +29,52 @@ fn main() {
     let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
     let mut runtime = Runtime::new(stream, file);
-    runtime.run(|uffd_handler: &mut UffdHandler| {
-        // Read an event from the userfaultfd.
-        let event = uffd_handler
-            .read_event()
-            .expect("Failed to read uffd_msg")
-            .expect("uffd_msg not ready");
+    runtime.run(
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let event = uffd_handler
+                .read_event()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
 
-        let gfn = event;
+            let gfn = event;
 
-        // println!("about to copy 1 page...");
-        unsafe {
+            // println!("about to copy 1 page...");
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    uffd_handler.backing_buffer.offset(4096 * gfn as isize),
+                    uffd_handler.guest_memfd_addr.offset(4096 * gfn as isize),
+                    4096,
+                )
+            }
+            // println!("copied...");
+
+            // println!("about to clear uffd memattr...");
+            let attributes = kvm_memory_attributes {
+                address: 4096 * gfn,
+                size: 4096,
+                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                ..Default::default()
+            };
+
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_SET_MEMORY_ATTRIBUTES(),
+                    &attributes,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
+
+            // println!("cleared.");
+        },
+        |uffd_handler: &mut UffdHandler, gfn: u64| unsafe {
             std::ptr::copy_nonoverlapping(
                 uffd_handler.backing_buffer.offset(4096 * gfn as isize),
                 uffd_handler.guest_memfd_addr.offset(4096 * gfn as isize),
                 4096,
             )
-        }
-        // println!("copied...");
-
-        // println!("about to clear uffd memattr...");
-        let attributes = kvm_memory_attributes {
-            address: 4096 * gfn,
-            size: 4096,
-            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-            ..Default::default()
-        };
-
-        unsafe {
-            SyscallReturnCode(ioctl_with_ref(
-                &uffd_handler.kvm_fd,
-                KVM_SET_MEMORY_ATTRIBUTES(),
-                &attributes,
-            ))
-            .into_empty_result()
-            .unwrap()
-        }
-
-        // println!("cleared.");
-    });
+        },
+    );
 }

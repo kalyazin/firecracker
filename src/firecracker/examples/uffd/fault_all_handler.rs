@@ -29,48 +29,68 @@ fn main() {
     let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
     let mut runtime = Runtime::new(stream, file);
-    runtime.run(|uffd_handler: &mut UffdHandler| {
-        // Read an event from the userfaultfd.
-        let _event = uffd_handler
-            .read_event()
-            .expect("Failed to read uffd_msg")
-            .expect("uffd_msg not ready");
+    runtime.run(
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let _event = uffd_handler
+                .read_event()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
 
-        let sizes: Vec<usize> = uffd_handler
-            .mem_regions
-            .iter()
-            .map(|region| region.mapping.size as usize)
-            .collect();
-        let mem_size = sizes[0];
+            let sizes: Vec<usize> = uffd_handler
+                .mem_regions
+                .iter()
+                .map(|region| region.mapping.size as usize)
+                .collect();
+            let mem_size = sizes[0];
 
-        println!("about to copy all pages in...");
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                uffd_handler.backing_buffer.offset(0 as isize),
-                uffd_handler.guest_memfd_addr.offset(0 as isize),
-                mem_size,
-            )
-        }
-        println!("copied.");
+            println!("about to copy all pages in...");
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    uffd_handler.backing_buffer.offset(0 as isize),
+                    uffd_handler.guest_memfd_addr.offset(0 as isize),
+                    mem_size,
+                )
+            }
+            println!("copied.");
 
-        println!("about to clear uffd memattr for all pages...");
-        let attributes = kvm_memory_attributes {
-            address: 0,
-            size: mem_size as u64,
-            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-            ..Default::default()
-        };
+            println!("about to clear uffd memattr for all pages...");
+            let attributes = kvm_memory_attributes {
+                address: 0,
+                size: mem_size as u64,
+                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                ..Default::default()
+            };
 
-        unsafe {
-            SyscallReturnCode(ioctl_with_ref(
-                &uffd_handler.kvm_fd,
-                KVM_SET_MEMORY_ATTRIBUTES(),
-                &attributes,
-            ))
-            .into_empty_result()
-            .unwrap()
-        }
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_SET_MEMORY_ATTRIBUTES(),
+                    &attributes,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
 
-        println!("cleared.");
-    });
+            println!("cleared.");
+        },
+        |uffd_handler: &mut UffdHandler, _gfn: u64| {
+            let sizes: Vec<usize> = uffd_handler
+                .mem_regions
+                .iter()
+                .map(|region| region.mapping.size as usize)
+                .collect();
+            let mem_size = sizes[0];
+
+            println!("about to copy all pages in...");
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    uffd_handler.backing_buffer.offset(0 as isize),
+                    uffd_handler.guest_memfd_addr.offset(0 as isize),
+                    mem_size,
+                )
+            }
+            println!("copied.");
+        },
+    );
 }

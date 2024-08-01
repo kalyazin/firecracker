@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Write;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::ptr;
@@ -68,8 +69,17 @@ pub struct UffdHandler {
     pub guest_memfd_addr: *mut u8,
 }
 
+pub enum FromUnixStreamResult {
+    NewConn(UffdHandler),
+    Gfn(u64),
+}
+
 impl UffdHandler {
-    pub fn from_unix_stream(stream: &UnixStream, backing_buffer: *const u8, size: usize) -> Self {
+    pub fn from_unix_stream(
+        stream: &UnixStream,
+        backing_buffer: *const u8,
+        size: usize,
+    ) -> FromUnixStreamResult {
         let mut message_buf = vec![0u8; 1024];
         use core::ffi::c_void;
         let mut iovecs = [iovec {
@@ -81,76 +91,79 @@ impl UffdHandler {
             unsafe { stream.recv_with_fds(&mut iovecs[..], &mut fds).unwrap() };
         message_buf.resize(read_count, 0);
 
-        println!(
-            "received FDs via UDS: {fds:?}, payload: {}",
-            message_buf.len()
-        );
+        // FIXME: if we didn't receive any fds, it's an implicit indication that it's a pagefault
+        // notification.
+        if fds[0] != 0 {
+            let body = String::from_utf8(message_buf).unwrap();
 
-        let body = String::from_utf8(message_buf).unwrap();
+            let mappings = serde_json::from_str::<Vec<GuestRegionUffdMapping>>(&body)
+                .expect("Cannot deserialize memory mappings.");
+            let memsize: usize = mappings.iter().map(|r| r.size).sum();
+            // Page size is the same for all memory regions, so just grab the first one
+            let page_size = mappings.first().unwrap().page_size_kib;
 
-        let mappings = serde_json::from_str::<Vec<GuestRegionUffdMapping>>(&body)
-            .expect("Cannot deserialize memory mappings.");
-        let memsize: usize = mappings.iter().map(|r| r.size).sum();
-        // Page size is the same for all memory regions, so just grab the first one
-        let page_size = mappings.first().unwrap().page_size_kib;
+            // Make sure memory size matches backing data size.
+            assert_eq!(memsize, size);
+            assert!(page_size.is_power_of_two());
 
-        // Make sure memory size matches backing data size.
-        assert_eq!(memsize, size);
-        assert!(page_size.is_power_of_two());
+            // This one is a dummy, not used.
+            let uffd = unsafe { Uffd::from_raw_fd(1000) };
 
-        // This one is a dummy, not used.
-        let uffd = unsafe { Uffd::from_raw_fd(1000) };
+            let eventfd = unsafe { EventFd::from_raw_fd(fds[0].into_raw_fd()) };
+            let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
 
-        let eventfd = unsafe { EventFd::from_raw_fd(fds[0].into_raw_fd()) };
-        let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
+            // We've no way to construct a real VmFd from scratch as it's in kvm-ioctls repo.
+            pub struct VmFdMy {
+                vm: File,
+                run_size: usize,
+            }
 
-        // We've no way to construct a real VmFd from scratch as it's in kvm-ioctls repo.
-        pub struct VmFdMy {
-            vm: File,
-            run_size: usize,
-        }
+            // We don't care about run_size as we don't use it here.
+            let vmfd_my = VmFdMy {
+                vm: unsafe { File::from_raw_fd(fds[2].into_raw_fd()) },
+                run_size: 0,
+            };
+            let kvm_fd = unsafe { std::mem::transmute::<VmFdMy, VmFd>(vmfd_my) };
 
-        // We don't care about run_size as we don't use it here.
-        let vmfd_my = VmFdMy {
-            vm: unsafe { File::from_raw_fd(fds[2].into_raw_fd()) },
-            run_size: 0,
-        };
-        let kvm_fd = unsafe { std::mem::transmute::<VmFdMy, VmFd>(vmfd_my) };
+            let mem_regions = create_mem_regions(&mappings, page_size);
 
-        let mem_regions = create_mem_regions(&mappings, page_size);
+            let sizes: Vec<usize> = mem_regions
+                .iter()
+                .map(|region| region.mapping.size as usize)
+                .collect();
 
-        let sizes: Vec<usize> = mem_regions
-            .iter()
-            .map(|region| region.mapping.size as usize)
-            .collect();
+            // # Safety:
+            // File size and fd are valid
+            let ret = unsafe {
+                libc::mmap(
+                    ptr::null_mut(),
+                    sizes[0],
+                    libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    guest_memfd.as_raw_fd(),
+                    0,
+                )
+            };
+            if ret == libc::MAP_FAILED {
+                panic!("mmap on guest_memfd failed");
+            }
 
-        // # Safety:
-        // File size and fd are valid
-        let ret = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                sizes[0],
-                libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                guest_memfd.as_raw_fd(),
-                0,
-            )
-        };
-        if ret == libc::MAP_FAILED {
-            panic!("mmap on guest_memfd failed");
-        }
+            println!("guest_memfd is mmapped.");
 
-        println!("guest_memfd is mmapped.");
-
-        Self {
-            mem_regions,
-            page_size,
-            backing_buffer,
-            eventfd,
-            guest_memfd,
-            kvm_fd,
-            uffd,
-            guest_memfd_addr: ret.cast(),
+            FromUnixStreamResult::NewConn(Self {
+                mem_regions,
+                page_size,
+                backing_buffer,
+                eventfd,
+                guest_memfd,
+                kvm_fd,
+                uffd,
+                guest_memfd_addr: ret.cast(),
+            })
+        } else {
+            let gpa: u64 = u64::from_be_bytes(message_buf.as_slice().try_into().unwrap());
+            let gfn = gpa / 4096;
+            FromUnixStreamResult::Gfn(gfn)
         }
     }
 
@@ -280,7 +293,11 @@ impl Runtime {
     /// When uffd is polled, page fault is handled by
     /// calling `pf_event_dispatch` with corresponding
     /// uffd object passed in.
-    pub fn run(&mut self, pf_event_dispatch: impl Fn(&mut UffdHandler)) {
+    pub fn run(
+        &mut self,
+        pf_event_dispatch: impl Fn(&mut UffdHandler),
+        pf_exit_dispatch: impl Fn(&mut UffdHandler, u64),
+    ) {
         let mut pollfds = vec![];
 
         // Poll the stream for incoming uffds
@@ -316,21 +333,35 @@ impl Runtime {
                     nready -= 1;
                     if pollfds[i].fd == self.stream.as_raw_fd() {
                         // Handle new uffd from stream
-                        let handler = UffdHandler::from_unix_stream(
+                        let result = UffdHandler::from_unix_stream(
                             &self.stream,
                             self.backing_memory,
                             self.backing_memory_size,
                         );
-                        pollfds.push(libc::pollfd {
-                            fd: handler.eventfd.as_raw_fd(),
-                            events: libc::POLLIN,
-                            revents: 0,
-                        });
-                        self.eventfds.insert(handler.eventfd.as_raw_fd(), handler);
 
-                        // If connection is closed, we can skip the socket from being polled.
-                        if pollfds[i].revents & (libc::POLLRDHUP | libc::POLLHUP) != 0 {
-                            skip_stream = 1;
+                        match result {
+                            FromUnixStreamResult::NewConn(handler) => {
+                                pollfds.push(libc::pollfd {
+                                    fd: handler.eventfd.as_raw_fd(),
+                                    events: libc::POLLIN,
+                                    revents: 0,
+                                });
+                                self.eventfds.insert(handler.eventfd.as_raw_fd(), handler);
+
+                                // If connection is closed, we can skip the socket from being
+                                // polled.
+                                if pollfds[i].revents & (libc::POLLRDHUP | libc::POLLHUP) != 0 {
+                                    skip_stream = 1;
+                                }
+                            }
+                            FromUnixStreamResult::Gfn(gfn) => {
+                                let (_, handler) = self.eventfds.iter_mut().next().unwrap();
+                                pf_exit_dispatch(handler, gfn);
+
+                                // Replying 1 as an ack. Can be anything.
+                                let bytes = (1 as u64).to_be_bytes();
+                                let _ret = self.stream.write_all(&bytes);
+                            }
                         }
                     } else {
                         // Handle one of uffd page faults
