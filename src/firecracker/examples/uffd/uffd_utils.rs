@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::ptr;
@@ -251,6 +251,7 @@ impl UffdHandler {
 #[derive(Debug)]
 pub struct Runtime {
     stream: UnixStream,
+    apf_stream: UnixStream,
     backing_file: File,
     backing_memory: *mut u8,
     backing_memory_size: usize,
@@ -258,7 +259,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new(stream: UnixStream, backing_file: File) -> Self {
+    pub fn new(stream: UnixStream, backing_file: File, apf_stream: UnixStream) -> Self {
         let file_meta = backing_file
             .metadata()
             .expect("can not get backing file metadata");
@@ -281,6 +282,7 @@ impl Runtime {
 
         Self {
             stream,
+            apf_stream,
             backing_file,
             backing_memory: ret.cast(),
             backing_memory_size,
@@ -307,6 +309,13 @@ impl Runtime {
             revents: 0,
         });
 
+        // Poll the stream for incoming APF connections
+        pollfds.push(libc::pollfd {
+            fd: self.apf_stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+
         // We can skip polling on stream fd if
         // the connection is closed.
         let mut skip_stream: usize = 0;
@@ -326,10 +335,10 @@ impl Runtime {
                 if nready == 0 {
                     break;
                 }
+                if pollfds[i].revents & libc::POLLHUP != 0 {
+                    panic!("sighup received!");
+                }
                 if pollfds[i].revents & libc::POLLIN != 0 {
-                    if pollfds[i].revents & libc::POLLHUP != 0 {
-                        continue;
-                    }
                     nready -= 1;
                     if pollfds[i].fd == self.stream.as_raw_fd() {
                         // Handle new uffd from stream
@@ -361,6 +370,47 @@ impl Runtime {
                                 // Replying 1 as an ack. Can be anything.
                                 let bytes = (1 as u64).to_be_bytes();
                                 let _ret = self.stream.write_all(&bytes);
+                            }
+                        }
+                    } else if pollfds[i].fd == self.apf_stream.as_raw_fd() {
+                        let (_, handler) = self.eventfds.iter_mut().next().unwrap();
+                        let req: &mut [u8; 8] = &mut [0; 8];
+
+                        loop {
+                            match self.apf_stream.read_exact(req) {
+                                Ok(()) => {
+                                    let evt: u64 =
+                                        u64::from_be_bytes(req.as_slice().try_into().unwrap());
+                                    let gpa = evt & 0xffff_ffff;
+
+                                    /* let token = (evt >> 32) & 0xffff_f7ff;
+                                    let notpresent_injected = evt & (1 << (32 + 11)) != 0;
+                                    let vcpu_idx = evt & 0x7ff;
+
+                                    println!(
+                                        "APF: req: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
+                                        gpa, token, vcpu_idx, notpresent_injected
+                                    ); */
+
+                                    let gfn = gpa / 4096;
+
+                                    pf_exit_dispatch(handler, gfn);
+
+                                    // Replying gpa as an ack.
+                                    let bytes = evt.to_be_bytes();
+                                    self.apf_stream.write_all(&bytes).unwrap();
+                                }
+                                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                    break;
+                                }
+                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                    break;
+                                }
+                                Err(e) => {
+                                    // Error occurred while reading from the stream
+                                    eprintln!("Error reading from stream: {}", e);
+                                    break;
+                                }
                             }
                         }
                     } else {

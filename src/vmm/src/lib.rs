@@ -112,8 +112,10 @@ pub mod vstate;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read, Write};
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
@@ -128,8 +130,11 @@ use seccompiler::BpfProgram;
 use userfaultfd::Uffd;
 use utils::epoll::EventSet;
 use utils::eventfd::EventFd;
+use utils::ioctl::ioctl_with_ref;
+use utils::syscall::SyscallReturnCode;
 use utils::terminal::Terminal;
 use utils::u64_to_usize;
+use vstate::guest_memfd::{kvm_async_pf_ready, KVM_ASYNC_PF_READY};
 use vstate::vcpu::{self, KvmVcpuConfigureError, StartThreadedError, VcpuSendEventError};
 
 use crate::arch::DeviceType;
@@ -317,8 +322,12 @@ pub struct Vmm {
     #[allow(dead_code)]
     uffd: Option<Uffd>,
     vcpus_handles: Vec<VcpuHandle>,
+    // vCPU fds
+    vcpu_fds: Vec<RawFd>,
     // Used by Vcpus and devices to initiate teardown; Vmm should never write here.
     vcpus_exit_evt: EventFd,
+    // Pipe
+    reader: File,
 
     // Allocator for guest resrouces
     resource_allocator: ResourceAllocator,
@@ -332,6 +341,8 @@ pub struct Vmm {
     pub guest_memfd: File,
     /// eventfd
     pub eventfd: Option<i32>,
+    /// APF
+    apf_stream: UnixStream,
 }
 
 impl Vmm {
@@ -397,6 +408,8 @@ impl Vmm {
             #[cfg(target_arch = "x86_64")]
             vcpu.kvm_vcpu
                 .set_pio_bus(self.pio_device_manager.io_bus.clone());
+
+            self.vcpu_fds.push(vcpu.kvm_vcpu.fd.as_raw_fd());
 
             self.vcpus_handles
                 .push(vcpu.start_threaded(vcpu_seccomp_filter.clone(), barrier.clone())?);
@@ -949,6 +962,109 @@ impl MutEventSubscriber for Vmm {
                 FcExitCode::Ok
             };
             self.stop(exit_code);
+        } else if source == self.reader.as_raw_fd() && event_set == EventSet::IN {
+            let mut req = [0u8; 8];
+
+            loop {
+                match self.reader.read_exact(&mut req) {
+                    Ok(()) => {
+                        let evt: u64 = u64::from_be_bytes(req.as_slice().try_into().unwrap());
+
+                        /* let gpa = evt & 0xffff_ffff;
+                        let token = (evt >> 32) & 0xffff_f7ff;
+                        let notpresent_injected = evt & (1 << (32 + 11)) != 0;
+                        let vcpu_idx = evt & 0x7ff;
+
+                        println!(
+                            "APF: req: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
+                            gpa, token, vcpu_idx, notpresent_injected
+                        ); */
+
+                        let bytes = evt.to_be_bytes();
+                        self.apf_stream.write_all(&bytes).unwrap();
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        break;
+                    }
+                    Err(e) => {
+                        // Error occurred while reading from the stream
+                        eprintln!("Error reading from stream: {}", e);
+                        break;
+                    }
+                }
+            }
+        } else if source == self.apf_stream.as_raw_fd() && event_set == EventSet::IN {
+            let mut rep = [0u8; 8];
+
+            loop {
+                match self.apf_stream.read_exact(&mut rep) {
+                    Ok(()) => {
+                        let evt: u64 = u64::from_be_bytes(rep.as_slice().try_into().unwrap());
+                        let gpa = evt & 0xffff_ffff;
+                        let token = (evt >> 32) & 0xffff_f7ff;
+                        let notpresent_injected = evt & (1 << (32 + 11)) != 0;
+                        let vcpu_idx = evt & 0x7ff;
+
+                        /* println!(
+                            "APF: rep: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
+                            gpa, token, vcpu_idx, notpresent_injected
+                        ); */
+
+                        let gfn = gpa / 4096;
+
+                        use crate::vstate::guest_memfd::{
+                            kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                            KVM_SET_MEMORY_ATTRIBUTES,
+                        };
+
+                        let attributes = kvm_memory_attributes {
+                            address: 4096 * gfn,
+                            size: 4096 as u64,
+                            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                            ..Default::default()
+                        };
+
+                        unsafe {
+                            SyscallReturnCode(ioctl_with_ref(
+                                self.vm.fd(),
+                                KVM_SET_MEMORY_ATTRIBUTES(),
+                                &attributes,
+                            ))
+                            .into_empty_result()
+                            .unwrap()
+                        }
+
+                        let ready = kvm_async_pf_ready {
+                            gpa,
+                            token: token.try_into().unwrap(),
+                            notpresent_injected: notpresent_injected.try_into().unwrap(),
+                        };
+                        unsafe {
+                            SyscallReturnCode(ioctl_with_ref(
+                                &self.vcpu_fds[vcpu_idx as usize],
+                                KVM_ASYNC_PF_READY(),
+                                &ready,
+                            ))
+                            .into_empty_result()
+                            .unwrap()
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        break;
+                    }
+                    Err(e) => {
+                        // Error occurred while reading from the stream
+                        eprintln!("Error reading from stream: {}", e);
+                        break;
+                    }
+                }
+            }
         } else {
             error!("Spurious EventManager event for handler: Vmm");
         }
@@ -957,6 +1073,12 @@ impl MutEventSubscriber for Vmm {
     fn init(&mut self, ops: &mut EventOps) {
         if let Err(err) = ops.add(Events::new(&self.vcpus_exit_evt, EventSet::IN)) {
             error!("Failed to register vmm exit event: {}", err);
+        }
+        if let Err(err) = ops.add(Events::new(&self.reader, EventSet::IN)) {
+            error!("Failed to register apf reader: {}", err);
+        }
+        if let Err(err) = ops.add(Events::new(&self.apf_stream, EventSet::IN)) {
+            error!("Failed to register apf stream: {}", err);
         }
     }
 }

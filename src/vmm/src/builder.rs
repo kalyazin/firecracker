@@ -6,8 +6,9 @@
 #[cfg(target_arch = "x86_64")]
 use std::convert::TryFrom;
 use std::fmt::Debug;
+use std::fs::File;
 use std::io::{self, Seek, SeekFrom};
-use std::os::fd::FromRawFd;
+use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
@@ -147,6 +148,16 @@ impl std::convert::From<linux_loader::cmdline::Error> for StartMicrovmError {
     }
 }
 
+fn pipe2(flags: libc::c_int) -> io::Result<(RawFd, RawFd)> {
+    let mut fds = [0, 0];
+    let res = unsafe { libc::pipe2(fds.as_mut_ptr(), flags) };
+    if res == 0 {
+        Ok((fds[0], fds[1]))
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 #[cfg_attr(target_arch = "aarch64", allow(unused))]
 fn create_vmm_and_vcpus(
     instance_info: &InstanceInfo,
@@ -157,6 +168,7 @@ fn create_vmm_and_vcpus(
     vcpu_count: u8,
     kvm_capabilities: Vec<KvmCapability>,
     uds: Option<UnixStream>,
+    apf_stream: Option<UnixStream>,
 ) -> Result<(Vmm, Vec<Vcpu>), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -182,6 +194,12 @@ fn create_vmm_and_vcpus(
         .map_err(VmmError::EventFd)
         .map_err(Internal)?;
 
+    let (reader_fd, writer_fd) = pipe2(libc::O_NONBLOCK).unwrap();
+
+    // Convert the file descriptors to UnixStream instances
+    let reader = unsafe { File::from_raw_fd(reader_fd) };
+    let writer = unsafe { File::from_raw_fd(writer_fd) };
+
     let resource_allocator = ResourceAllocator::new()?;
 
     // Instantiate the MMIO device manager.
@@ -196,7 +214,8 @@ fn create_vmm_and_vcpus(
     #[cfg(target_arch = "x86_64")]
     let (vcpus, pio_device_manager) = {
         setup_interrupt_controller(&mut vm)?;
-        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt).map_err(Internal)?;
+        let vcpus =
+            create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &writer).map_err(Internal)?;
 
         // Make stdout non blocking.
         set_stdout_nonblocking();
@@ -241,7 +260,9 @@ fn create_vmm_and_vcpus(
         guest_memory: private_memory,
         uffd,
         vcpus_handles: Vec::new(),
+        vcpu_fds: Vec::new(),
         vcpus_exit_evt,
+        reader,
         resource_allocator,
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
@@ -250,6 +271,7 @@ fn create_vmm_and_vcpus(
         acpi_device_manager,
         guest_memfd,
         eventfd: None,
+        apf_stream: apf_stream.unwrap(),
     };
 
     Ok((vmm, vcpus))
@@ -287,6 +309,7 @@ pub fn build_microvm_for_boot(
         track_dirty_pages,
         vm_resources.vm_config.vcpu_count,
         cpu_template.kvm_capabilities.clone(),
+        None,
         None,
     )?;
 
@@ -474,7 +497,26 @@ pub fn build_microvm_from_snapshot(
     let socket = UnixStream::connect(uds_sock).unwrap();
     use utils::sock_ctrl_msg::ScmSocket;
 
+    // FIXME: adding this delay because otherwise
+    // UFFD handler receives POLLHUP along with POLLIN
+    // (I don't know why).
+    use std::thread;
+    use std::time::Duration;
+    thread::sleep(Duration::from_millis(3 * 1000));
+
+    // FIXME: Hardcoding the APF socket path as it's awkward to bring it here.
+    let apf_sock = "/mnt/host/apf.sock";
+    let apf_stream = UnixStream::connect(apf_sock)
+        .map(|stream| {
+            stream
+                .set_nonblocking(true)
+                .expect("Failed to set non-blocking mode");
+            stream
+        })
+        .unwrap();
+
     let socket_copy = unsafe { UnixStream::from_raw_fd(socket.as_raw_fd()) };
+
 
     // Build Vmm.
     debug!("event_start: build microvm from snapshot");
@@ -487,6 +529,7 @@ pub fn build_microvm_from_snapshot(
         vm_resources.vm_config.vcpu_count,
         microvm_state.vm_state.kvm_cap_modifiers.clone(),
         Some(socket_copy),
+        Some(apf_stream),
     )?;
 
     // Create eventfd and cache it in VMM, so it isn't GC'ed.
@@ -782,11 +825,18 @@ fn attach_legacy_devices_aarch64(
         .map_err(VmmError::RegisterMMIODevice)
 }
 
-fn create_vcpus(vm: &Vm, vcpu_count: u8, exit_evt: &EventFd) -> Result<Vec<Vcpu>, VmmError> {
+fn create_vcpus(
+    vm: &Vm,
+    vcpu_count: u8,
+    exit_evt: &EventFd,
+    writer: &File,
+) -> Result<Vec<Vcpu>, VmmError> {
     let mut vcpus = Vec::with_capacity(vcpu_count as usize);
     for cpu_idx in 0..vcpu_count {
         let exit_evt = exit_evt.try_clone().map_err(VmmError::EventFd)?;
-        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt).map_err(VmmError::VcpuCreate)?;
+        let writer = writer.try_clone().map_err(VmmError::EventFd)?;
+        let vcpu =
+            Vcpu::new(cpu_idx, vm, exit_evt, writer).map_err(VmmError::VcpuCreate)?;
         vcpus.push(vcpu);
     }
     Ok(vcpus)

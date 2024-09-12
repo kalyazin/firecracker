@@ -7,7 +7,7 @@
 
 use std::cell::Cell;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Barrier};
@@ -83,6 +83,7 @@ type VcpuCell = Cell<Option<*mut Vcpu>>;
 #[error("Failed to spawn vCPU thread: {0}")]
 pub struct StartThreadedError(std::io::Error);
 
+use std::fs::File;
 use std::os::unix::net::UnixStream;
 
 /// A wrapper around creating and using a vcpu.
@@ -93,6 +94,8 @@ pub struct Vcpu {
 
     /// File descriptor for vcpu to trigger exit event on vmm.
     exit_evt: EventFd,
+    /// Pipe
+    writer: File,
     /// The receiving end of events channel owned by the vcpu side.
     event_receiver: Receiver<VcpuEvent>,
     /// The transmitting end of the events channel which will be given to the handler.
@@ -199,12 +202,16 @@ impl Vcpu {
     /// * `index` - Represents the 0-based CPU index between [0, max vcpus).
     /// * `vm` - The vm to which this vcpu will get attached.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd) -> Result<Self, VcpuError> {
+        pub fn new(
+        index: u8,
+        vm: &Vm,
+        exit_evt: EventFd,
+        writer: File,
+    ) -> Result<Self, VcpuError> {
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
         let kvm_vcpu = KvmVcpu::new(index, vm).unwrap();
 
-        use std::fs::File;
         pub struct VmFdMy {
             pub vm: File,
             pub run_size: usize,
@@ -226,6 +233,7 @@ impl Vcpu {
 
         Ok(Vcpu {
             exit_evt,
+            writer,
             event_receiver,
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
@@ -474,6 +482,8 @@ impl Vcpu {
             return Ok(VcpuEmulation::Interrupted);
         }
 
+        let vcpu_fd = self.kvm_vcpu.fd.as_raw_fd();
+
         match self.kvm_vcpu.fd.run() {
             Err(ref err) if err.errno() == libc::EINTR => {
                 self.kvm_vcpu.fd.set_kvm_immediate_exit(0);
@@ -485,6 +495,8 @@ impl Vcpu {
                 emulation_result,
                 &self.kvm_fd,
                 &mut self.uds,
+                vcpu_fd,
+                &self.writer,
             ),
         }
     }
@@ -496,6 +508,8 @@ fn handle_kvm_exit(
     emulation_result: Result<VcpuExit, errno::Error>,
     kvm_fd: &VmFd,
     uds: &mut UnixStream,
+    _vcpu_fd: RawFd,
+    mut writer: &File,
 ) -> Result<VcpuEmulation, VcpuError> {
     match emulation_result {
         Ok(run) => match run {
@@ -566,10 +580,81 @@ fn handle_kvm_exit(
                     )))
                 }
             },
-            VcpuExit::MemoryFault {flags: _, gpa, size: _} => {
+            VcpuExit::MemoryFault { flags, gpa, size } => {
+                let async_pf = (flags & (1 << 5)) != 0;
+
+                if async_pf {
+                    /* println!(
+                        "APF: flags 0x{:x} size/token 0x{:x} gpa {:x}",
+                        flags, size, gpa
+                    ); */
+
+                    let token = size as u32;
+                    let notpresent_injected = ((flags & (1 << 6)) != 0) as u64;
+
+                    let evt: u64 =
+                        ((token as u64) << 32) | (notpresent_injected << (32 + 11)) | gpa;
+
+                    // Async PF handling begin
+                    let bytes = evt.to_be_bytes();
+                    writer.write_all(&bytes).unwrap();
+
+                    return Ok(VcpuEmulation::Handled);
+                    // Async PF handling end
+
+                    // To process async PFs synchronously,
+                    //  - comment the block above ("Async PF handling")
+                    //  - uncomment the block below ("Sync PF handling")
+
+                    // Sync PF handling begin
+                    /* let bytes = gpa.to_be_bytes();
+                    uds.write_all(&bytes).unwrap();
+
+                    let ack: &mut [u8; 8] = &mut [0; 8];
+                    uds.read_exact(ack).unwrap();
+
+                    let gfn = gpa / 4096;
+
+                    let attributes = kvm_memory_attributes {
+                        address: 4096 * gfn,
+                        size: 4096 as u64,
+                        attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                        ..Default::default()
+                    };
+
+                    unsafe {
+                        SyscallReturnCode(ioctl_with_ref(
+                            kvm_fd,
+                            KVM_SET_MEMORY_ATTRIBUTES(),
+                            &attributes,
+                        ))
+                        .into_empty_result()
+                        .unwrap()
+                    }
+
+                    let ready = kvm_async_pf_ready {
+                        gpa,
+                        token: token.try_into().unwrap(),
+                        notpresent_injected: notpresent_injected.try_into().unwrap(),
+                    };
+                    unsafe {
+                        SyscallReturnCode(ioctl_with_ref(
+                            &vcpu_fd,
+                            KVM_ASYNC_PF_READY(),
+                            &ready,
+                        ))
+                        .into_empty_result()
+                        .unwrap()
+                    }
+
+                    return Ok(VcpuEmulation::Handled); */
+                    // Sync PF handling end
+                }
+
                 // FIXME: we should be checking that flags contain KVM_MEMORY_EXIT_FLAG_USERFAULT
                 let bytes = gpa.to_be_bytes();
                 let _ret = uds.write_all(&bytes);
+
                 let ack: &mut [u8; 8] = &mut [0; 8];
                 let _ret = uds.read_exact(ack);
 

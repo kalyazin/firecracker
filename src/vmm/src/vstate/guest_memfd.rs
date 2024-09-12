@@ -86,6 +86,15 @@ pub struct kvm_memory_attributes {
     pub flags: u64,
 }
 
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Copy, Clone, Default, Debug)]
+pub struct kvm_async_pf_ready {
+    pub gpa: u64,
+    pub token: u32,
+    pub notpresent_injected: u32,
+}
+
 // VM ioctl used to mark guest page frames as shared/private
 ioctl_iow_nr!(
     KVM_SET_MEMORY_ATTRIBUTES,
@@ -93,6 +102,9 @@ ioctl_iow_nr!(
     0xd2,
     kvm_memory_attributes
 );
+
+// VM ioctl used to notify about async page ready
+ioctl_iow_nr!(KVM_ASYNC_PF_READY, KVMIO, 0xd6, kvm_async_pf_ready);
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
