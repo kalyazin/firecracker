@@ -7,7 +7,7 @@
 
 mod uffd_utils;
 
-use std::fs::File;
+use std::{fs::File, time::Instant};
 use std::os::unix::net::UnixListener;
 
 use uffd_utils::{Runtime, UffdHandler};
@@ -34,6 +34,10 @@ fn main() {
         .accept()
         .expect("Cannot listen on UDS APF socket");
 
+    apf_stream
+        .set_nonblocking(true)
+        .expect("Failed to set non-blocking mode");
+
     let mut runtime = Runtime::new(stream, file, apf_stream);
     runtime.run(
         |uffd_handler: &mut UffdHandler| {
@@ -51,6 +55,7 @@ fn main() {
             let mem_size = sizes[0];
 
             println!("about to copy all pages in...");
+            let start_time = Instant::now();
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     uffd_handler.backing_buffer.offset(0 as isize),
@@ -58,7 +63,8 @@ fn main() {
                     mem_size,
                 )
             }
-            println!("copied.");
+            let elapsed_time = start_time.elapsed();
+            println!("copied in {:?}", elapsed_time);
 
             println!("about to clear uffd memattr for all pages...");
             let attributes = kvm_memory_attributes {
