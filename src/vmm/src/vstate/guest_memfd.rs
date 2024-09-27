@@ -95,6 +95,18 @@ pub struct kvm_async_pf_ready {
     pub notpresent_injected: u32,
 }
 
+use std::os::raw::c_void;
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct kvm_guest_memfd_copy {
+    pub guest_memfd: u32,
+    pub from: *const c_void,
+    pub offset: u64,
+    pub len: u64,
+}
+
 // VM ioctl used to mark guest page frames as shared/private
 ioctl_iow_nr!(
     KVM_SET_MEMORY_ATTRIBUTES,
@@ -105,6 +117,9 @@ ioctl_iow_nr!(
 
 // VM ioctl used to notify about async page ready
 ioctl_iow_nr!(KVM_ASYNC_PF_READY, KVMIO, 0xd6, kvm_async_pf_ready);
+
+// VM ioctl used to notify about async page ready
+ioctl_iow_nr!(KVM_GUEST_MEMFD_COPY, KVMIO, 0xd7, kvm_guest_memfd_copy);
 
 #[allow(non_camel_case_types)]
 #[repr(C)]

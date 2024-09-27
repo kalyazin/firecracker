@@ -7,6 +7,7 @@
 
 mod uffd_utils;
 
+use std::os::fd::AsRawFd;
 use std::{fs::File, time::Instant};
 use std::os::unix::net::UnixListener;
 
@@ -14,7 +15,7 @@ use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use vmm::vstate::guest_memfd::{
-    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+    kvm_guest_memfd_copy, kvm_memory_attributes, KVM_GUEST_MEMFD_COPY, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES
 };
 
 fn main() {
@@ -55,6 +56,48 @@ fn main() {
             let mem_size = sizes[0];
 
             println!("about to copy all pages in...");
+            // let start_time = Instant::now();
+            /* let res = unsafe {
+                fallocate(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    libc::FALLOC_FL_KEEP_SIZE, // Preserve file size
+                    0,                         // Offset within the file
+                    mem_size as i64,                      // Length in bytes
+                )
+            };
+            if res != 0 {
+                println!("res = {res}");
+            } */
+            /* let elapsed_time = start_time.elapsed();
+            println!("fallocated in {:?}", elapsed_time); */
+            let start_time = Instant::now();
+            /* unsafe {
+                std::ptr::copy_nonoverlapping(
+                    uffd_handler.backing_buffer.offset(0 as isize),
+                    uffd_handler.guest_memfd_addr.offset(0 as isize),
+                    mem_size,
+                )
+            } */
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe { uffd_handler.backing_buffer.offset(0 as isize) as *const c_void },
+                offset: 0,
+                len: mem_size as u64,
+            };
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
+            let elapsed_time = start_time.elapsed();
+            println!("copied in {:?}", elapsed_time);
+
+            /* println!("about to memcpy...");
             let start_time = Instant::now();
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -64,7 +107,7 @@ fn main() {
                 )
             }
             let elapsed_time = start_time.elapsed();
-            println!("copied in {:?}", elapsed_time);
+            println!("memcpied in {:?}", elapsed_time); */
 
             println!("about to clear uffd memattr for all pages...");
             let attributes = kvm_memory_attributes {
