@@ -202,12 +202,7 @@ impl Vcpu {
     /// * `index` - Represents the 0-based CPU index between [0, max vcpus).
     /// * `vm` - The vm to which this vcpu will get attached.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-        pub fn new(
-        index: u8,
-        vm: &Vm,
-        exit_evt: EventFd,
-        writer: File,
-    ) -> Result<Self, VcpuError> {
+    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd, writer: File) -> Result<Self, VcpuError> {
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
         let kvm_vcpu = KvmVcpu::new(index, vm).unwrap();

@@ -214,8 +214,7 @@ fn create_vmm_and_vcpus(
     #[cfg(target_arch = "x86_64")]
     let (vcpus, pio_device_manager) = {
         setup_interrupt_controller(&mut vm)?;
-        let vcpus =
-            create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &writer).map_err(Internal)?;
+        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &writer).map_err(Internal)?;
 
         // Make stdout non blocking.
         set_stdout_nonblocking();
@@ -516,7 +515,6 @@ pub fn build_microvm_from_snapshot(
         .unwrap();
 
     let socket_copy = unsafe { UnixStream::from_raw_fd(socket.as_raw_fd()) };
-
 
     // Build Vmm.
     debug!("event_start: build microvm from snapshot");
@@ -835,8 +833,7 @@ fn create_vcpus(
     for cpu_idx in 0..vcpu_count {
         let exit_evt = exit_evt.try_clone().map_err(VmmError::EventFd)?;
         let writer = writer.try_clone().map_err(VmmError::EventFd)?;
-        let vcpu =
-            Vcpu::new(cpu_idx, vm, exit_evt, writer).map_err(VmmError::VcpuCreate)?;
+        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt, writer).map_err(VmmError::VcpuCreate)?;
         vcpus.push(vcpu);
     }
     Ok(vcpus)
