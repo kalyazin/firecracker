@@ -61,7 +61,7 @@ pub struct UffdHandler {
     // For receiving fault notifications
     eventfd: EventFd,
     // For mmapping guest memory
-    guest_memfd: File,
+    pub guest_memfd: File,
     // For clearing UFFD memattr
     pub kvm_fd: VmFd,
     uffd: Uffd,

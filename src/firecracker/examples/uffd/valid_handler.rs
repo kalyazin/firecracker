@@ -7,14 +7,15 @@
 
 mod uffd_utils;
 
-use std::fs::File;
 use std::os::unix::net::UnixListener;
+use std::{fs::File, os::fd::AsRawFd};
 
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use vmm::vstate::guest_memfd::{
-    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+    kvm_guest_memfd_copy, kvm_memory_attributes, KVM_GUEST_MEMFD_COPY,
+    KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
 };
 
 fn main() {
@@ -49,15 +50,24 @@ fn main() {
 
             let gfn = event;
 
-            // println!("about to copy 1 page...");
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe {
+                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
+                },
+                offset: 4096 * gfn,
+                len: 4096,
+            };
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    uffd_handler.backing_buffer.offset(4096 * gfn as isize),
-                    uffd_handler.guest_memfd_addr.offset(4096 * gfn as isize),
-                    4096,
-                )
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
             }
-            // println!("copied...");
 
             // println!("about to clear uffd memattr...");
             let attributes = kvm_memory_attributes {
@@ -79,12 +89,25 @@ fn main() {
 
             // println!("cleared.");
         },
-        |uffd_handler: &mut UffdHandler, gfn: u64| unsafe {
-            std::ptr::copy_nonoverlapping(
-                uffd_handler.backing_buffer.offset(4096 * gfn as isize),
-                uffd_handler.guest_memfd_addr.offset(4096 * gfn as isize),
-                4096,
-            )
+        |uffd_handler: &mut UffdHandler, gfn: u64| {
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe {
+                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
+                },
+                offset: 4096 * gfn,
+                len: 4096,
+            };
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
         },
     );
 }

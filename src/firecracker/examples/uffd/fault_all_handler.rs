@@ -7,14 +7,16 @@
 
 mod uffd_utils;
 
-use std::{fs::File, time::Instant};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
+use std::{fs::File, time::Instant};
 
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use vmm::vstate::guest_memfd::{
-    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
+    kvm_guest_memfd_copy, kvm_memory_attributes, KVM_GUEST_MEMFD_COPY,
+    KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
 };
 
 fn main() {
@@ -56,12 +58,21 @@ fn main() {
 
             println!("about to copy all pages in...");
             let start_time = Instant::now();
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe { uffd_handler.backing_buffer.offset(0 as isize) as *const c_void },
+                offset: 0,
+                len: mem_size as u64,
+            };
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    uffd_handler.backing_buffer.offset(0 as isize),
-                    uffd_handler.guest_memfd_addr.offset(0 as isize),
-                    mem_size,
-                )
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
             }
             let elapsed_time = start_time.elapsed();
             println!("copied in {:?}", elapsed_time);
@@ -95,6 +106,7 @@ fn main() {
             let mem_size = sizes[0];
 
             println!("about to copy all pages in...");
+            // FIXME: I didn't test this case
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     uffd_handler.backing_buffer.offset(0 as isize),
