@@ -650,10 +650,12 @@ fn handle_kvm_exit(
                 let bytes = gpa.to_be_bytes();
                 let _ret = uds.write_all(&bytes);
 
-                let ack: &mut [u8; 8] = &mut [0; 8];
+                let ack = &mut [0; 24];
                 let _ret = uds.read_exact(ack);
 
-                let gfn = gpa / 4096;
+                let _one = u64::from_be_bytes(ack[..8].try_into().unwrap());
+                let ret_gpa = u64::from_be_bytes(ack[8..16].try_into().unwrap());
+                let ret_len = u64::from_be_bytes(ack[16..].try_into().unwrap());
 
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
@@ -663,8 +665,8 @@ fn handle_kvm_exit(
                 };
 
                 let attributes = kvm_memory_attributes {
-                    address: 4096 * gfn,
-                    size: 4096 as u64,
+                    address: ret_gpa,
+                    size: ret_len,
                     attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
                     ..Default::default()
                 };

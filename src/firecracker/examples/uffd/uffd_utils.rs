@@ -298,7 +298,7 @@ impl Runtime {
     pub fn run(
         &mut self,
         pf_event_dispatch: impl Fn(&mut UffdHandler),
-        pf_exit_dispatch: impl Fn(&mut UffdHandler, u64),
+        pf_exit_dispatch: impl Fn(&mut UffdHandler, u64, &mut u64, &mut u64),
     ) {
         let mut pollfds = vec![];
 
@@ -365,10 +365,12 @@ impl Runtime {
                             }
                             FromUnixStreamResult::Gfn(gfn) => {
                                 let (_, handler) = self.eventfds.iter_mut().next().unwrap();
-                                pf_exit_dispatch(handler, gfn);
+                                let mut ret_gpa = 0u64;
+                                let mut ret_len: u64 = 0u64;
+                                pf_exit_dispatch(handler, gfn, &mut ret_gpa, &mut ret_len);
 
                                 // Replying 1 as an ack. Can be anything.
-                                let bytes = (1 as u64).to_be_bytes();
+                                let bytes = [(1 as u64).to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
                                 let _ret = self.stream.write_all(&bytes);
                             }
                         }
@@ -394,10 +396,12 @@ impl Runtime {
 
                                     let gfn = gpa / 4096;
 
-                                    pf_exit_dispatch(handler, gfn);
+                                    let mut ret_gpa = 0u64;
+                                    let mut ret_len: u64 = 0u64;
+                                    pf_exit_dispatch(handler, gfn, &mut ret_gpa, &mut ret_len);
 
                                     // Replying gpa as an ack.
-                                    let bytes = evt.to_be_bytes();
+                                    let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
                                     self.apf_stream.write_all(&bytes).unwrap();
                                 }
                                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {

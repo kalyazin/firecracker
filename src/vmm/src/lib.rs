@@ -997,12 +997,14 @@ impl MutEventSubscriber for Vmm {
                 }
             }
         } else if source == self.apf_stream.as_raw_fd() && event_set == EventSet::IN {
-            let mut rep = [0u8; 8];
+            let mut rep = [0u8; 24];
 
             loop {
                 match self.apf_stream.read_exact(&mut rep) {
                     Ok(()) => {
-                        let evt: u64 = u64::from_be_bytes(rep.as_slice().try_into().unwrap());
+                        let evt = u64::from_be_bytes(rep[..8].try_into().unwrap());
+                        let ret_gpa = u64::from_be_bytes(rep[8..16].try_into().unwrap());
+                        let ret_len = u64::from_be_bytes(rep[16..].try_into().unwrap());
                         let gpa = evt & 0xffff_ffff;
                         let token = (evt >> 32) & 0xffff_f7ff;
                         let notpresent_injected = evt & (1 << (32 + 11)) != 0;
@@ -1013,16 +1015,14 @@ impl MutEventSubscriber for Vmm {
                             gpa, token, vcpu_idx, notpresent_injected
                         ); */
 
-                        let gfn = gpa / 4096;
-
                         use crate::vstate::guest_memfd::{
                             kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
                             KVM_SET_MEMORY_ATTRIBUTES,
                         };
 
                         let attributes = kvm_memory_attributes {
-                            address: 4096 * gfn,
-                            size: 4096 as u64,
+                            address: ret_gpa,
+                            size: ret_len,
                             attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
                             ..Default::default()
                         };

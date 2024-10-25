@@ -97,7 +97,7 @@ fn main() {
 
             println!("cleared.");
         },
-        |uffd_handler: &mut UffdHandler, _gfn: u64| {
+        |uffd_handler: &mut UffdHandler, _gfn: u64, _ret_gpa: &mut u64, _ret_len: &mut u64| {
             let sizes: Vec<usize> = uffd_handler
                 .mem_regions
                 .iter()

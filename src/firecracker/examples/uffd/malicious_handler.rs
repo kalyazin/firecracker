@@ -39,7 +39,7 @@ fn main() {
 
             // FIXME: this handler is not functional.
         },
-        |_uffd_handler: &mut UffdHandler, _gfn: u64| {
+        |_uffd_handler: &mut UffdHandler, _gfn: u64, _ret_gpa: &mut u64, _ret_len: &mut u64| {
             // FIXME: this handler is not functional.
         },
     );

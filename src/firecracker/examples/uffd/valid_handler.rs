@@ -89,7 +89,7 @@ fn main() {
 
             // println!("cleared.");
         },
-        |uffd_handler: &mut UffdHandler, gfn: u64| {
+        |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             use std::os::raw::c_void;
             let copy = kvm_guest_memfd_copy {
                 guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
@@ -107,7 +107,10 @@ fn main() {
                 ))
                 .into_empty_result()
                 .unwrap()
-            }
+            };
+
+            *ret_gpa = 4096 * gfn;
+            *ret_len = 4096;
         },
     );
 }
