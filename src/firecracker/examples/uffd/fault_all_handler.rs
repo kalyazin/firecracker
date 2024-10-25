@@ -44,26 +44,21 @@ fn main() {
     runtime.run(
         |uffd_handler: &mut UffdHandler| {
             // Read an event from the userfaultfd.
-            let _event = uffd_handler
+            let event = uffd_handler
                 .read_event()
                 .expect("Failed to read uffd_msg")
                 .expect("uffd_msg not ready");
 
-            let sizes: Vec<usize> = uffd_handler
-                .mem_regions
-                .iter()
-                .map(|region| region.mapping.size as usize)
-                .collect();
-            let mem_size = sizes[0];
+            let gfn = event;
 
-            println!("about to copy all pages in...");
-            let start_time = Instant::now();
             use std::os::raw::c_void;
             let copy = kvm_guest_memfd_copy {
                 guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
-                from: unsafe { uffd_handler.backing_buffer.offset(0 as isize) as *const c_void },
-                offset: 0,
-                len: mem_size as u64,
+                from: unsafe {
+                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
+                },
+                offset: 4096 * gfn,
+                len: 4096,
             };
             unsafe {
                 SyscallReturnCode(ioctl_with_ref(
@@ -74,13 +69,11 @@ fn main() {
                 .into_empty_result()
                 .unwrap()
             }
-            let elapsed_time = start_time.elapsed();
-            println!("copied in {:?}", elapsed_time);
 
-            println!("about to clear uffd memattr for all pages...");
+            // println!("about to clear uffd memattr...");
             let attributes = kvm_memory_attributes {
-                address: 0,
-                size: mem_size as u64,
+                address: 4096 * gfn,
+                size: 4096,
                 attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
                 ..Default::default()
             };
@@ -95,9 +88,9 @@ fn main() {
                 .unwrap()
             }
 
-            println!("cleared.");
+            // println!("cleared.");
         },
-        |uffd_handler: &mut UffdHandler, _gfn: u64, _ret_gpa: &mut u64, _ret_len: &mut u64| {
+        |uffd_handler: &mut UffdHandler, _gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             let sizes: Vec<usize> = uffd_handler
                 .mem_regions
                 .iter()
@@ -106,15 +99,30 @@ fn main() {
             let mem_size = sizes[0];
 
             println!("about to copy all pages in...");
-            // FIXME: I didn't test this case
+            let start_time = Instant::now();
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe {
+                    uffd_handler.backing_buffer.offset(0 as isize) as *const c_void
+                },
+                offset: 0,
+                len: mem_size as u64,
+            };
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    uffd_handler.backing_buffer.offset(0 as isize),
-                    uffd_handler.guest_memfd_addr.offset(0 as isize),
-                    mem_size,
-                )
-            }
-            println!("copied.");
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
+            };
+            let elapsed_time = start_time.elapsed();
+            println!("copied in {:?}", elapsed_time);
+
+            *ret_gpa = 0;
+            *ret_len = mem_size as u64;
         },
     );
 }
