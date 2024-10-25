@@ -118,7 +118,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Barrier, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_arch = "x86_64")]
 use device_manager::acpi::ACPIDeviceManager;
@@ -134,7 +134,7 @@ use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use utils::terminal::Terminal;
 use utils::u64_to_usize;
-use vstate::guest_memfd::{kvm_async_pf_ready, KVM_ASYNC_PF_READY};
+use vstate::guest_memfd::{kvm_async_pf_ready, kvm_pre_fault_memory, KVM_ASYNC_PF_READY, KVM_PRE_FAULT_MEMORY};
 use vstate::vcpu::{self, KvmVcpuConfigureError, StartThreadedError, VcpuSendEventError};
 
 use crate::arch::DeviceType;
@@ -1035,6 +1035,28 @@ impl MutEventSubscriber for Vmm {
                             ))
                             .into_empty_result()
                             .unwrap()
+                        }
+
+                        if ret_len != 4096 {
+                            println!("about to prefault all pages in...");
+                            let start_time = Instant::now();
+                            let pre_fault = kvm_pre_fault_memory {
+                                gpa: ret_gpa,
+                                size: ret_len,
+                                ..Default::default()
+                            };
+
+                            unsafe {
+                                SyscallReturnCode(ioctl_with_ref(
+                                    &self.vcpu_fds[vcpu_idx as usize],
+                                    KVM_PRE_FAULT_MEMORY(),
+                                    &pre_fault,
+                                ))
+                                .into_empty_result()
+                                .unwrap()
+                            }
+                            let elapsed_time = start_time.elapsed();
+                            println!("prefaulted in {:?}", elapsed_time);
                         }
 
                         let ready = kvm_async_pf_ready {

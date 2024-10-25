@@ -11,6 +11,7 @@ use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Barrier};
+use std::time::Instant;
 use std::{fmt, io, thread};
 
 use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
@@ -25,6 +26,7 @@ use utils::sm::StateMachine;
 
 use crate::cpu_config::templates::{CpuConfiguration, GuestConfigError};
 use crate::logger::{IncMetric, METRICS};
+use crate::vstate::guest_memfd::{kvm_pre_fault_memory, KVM_PRE_FAULT_MEMORY};
 use crate::vstate::vm::Vm;
 use crate::FcExitCode;
 
@@ -503,7 +505,7 @@ fn handle_kvm_exit(
     emulation_result: Result<VcpuExit, errno::Error>,
     kvm_fd: &VmFd,
     uds: &mut UnixStream,
-    _vcpu_fd: RawFd,
+    vcpu_fd: RawFd,
     mut writer: &File,
 ) -> Result<VcpuEmulation, VcpuError> {
     match emulation_result {
@@ -679,6 +681,28 @@ fn handle_kvm_exit(
                     ))
                     .into_empty_result()
                     .unwrap()
+                }
+
+                if ret_len != 4096 {
+                    println!("about to prefault all pages in...");
+                    let start_time = Instant::now();
+                    let pre_fault = kvm_pre_fault_memory {
+                        gpa: ret_gpa,
+                        size: ret_len,
+                        ..Default::default()
+                    };
+
+                    unsafe {
+                        SyscallReturnCode(ioctl_with_ref(
+                            &vcpu_fd,
+                            KVM_PRE_FAULT_MEMORY(),
+                            &pre_fault,
+                        ))
+                        .into_empty_result()
+                        .unwrap()
+                    }
+                    let elapsed_time = start_time.elapsed();
+                    println!("prefaulted in {:?}", elapsed_time);
                 }
 
                 Ok(VcpuEmulation::Handled)

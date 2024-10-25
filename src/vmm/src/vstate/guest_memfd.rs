@@ -107,6 +107,16 @@ pub struct kvm_guest_memfd_copy {
     pub len: u64,
 }
 
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Copy, Clone, Default, Debug)]
+pub struct kvm_pre_fault_memory {
+    pub gpa: u64,
+    pub size: u64,
+    pub flags: u64,
+    pub padding: [u64; 5usize],
+}
+
 // VM ioctl used to mark guest page frames as shared/private
 ioctl_iow_nr!(
     KVM_SET_MEMORY_ATTRIBUTES,
@@ -120,6 +130,9 @@ ioctl_iow_nr!(KVM_ASYNC_PF_READY, KVMIO, 0xd6, kvm_async_pf_ready);
 
 // VM ioctl used to notify about async page ready
 ioctl_iow_nr!(KVM_GUEST_MEMFD_COPY, KVMIO, 0xd7, kvm_guest_memfd_copy);
+
+// VM ioctl to prefault SPTEs
+ioctl_iowr_nr!(KVM_PRE_FAULT_MEMORY, KVMIO, 0xd8, kvm_pre_fault_memory);
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
