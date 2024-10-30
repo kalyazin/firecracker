@@ -74,7 +74,7 @@ use crate::vmm_config::boot_source::BootConfig;
 use crate::vmm_config::instance_info::InstanceInfo;
 use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
 use crate::vstate::memory::{GuestAddress, GuestMemoryExtension, GuestMemoryMmap};
-use crate::vstate::vcpu::{Vcpu, VcpuConfig, VcpuError};
+use crate::vstate::vcpu::{ConstPtrWrapper, Vcpu, VcpuConfig, VcpuError};
 use crate::vstate::vm::Vm;
 use crate::{device_manager, mem_size_mib, EventManager, Vmm, VmmError};
 
@@ -608,6 +608,8 @@ pub fn build_microvm_from_snapshot(
 
     // Restore vcpus kvm state.
     for (vcpu, state) in vcpus.iter_mut().zip(microvm_state.vcpu_states.iter()) {
+        vcpu.mem_src_wrapper = ConstPtrWrapper(vmm.mem_src);
+        vcpu.guest_memfd = vmm.guest_memfd.try_clone().unwrap();
         vcpu.kvm_vcpu
             .restore_state(state)
             .map_err(VcpuError::VcpuResponse)

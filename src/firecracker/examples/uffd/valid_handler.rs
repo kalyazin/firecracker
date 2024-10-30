@@ -89,26 +89,7 @@ fn main() {
 
             // println!("cleared.");
         },
-        |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
-            use std::os::raw::c_void;
-            let copy = kvm_guest_memfd_copy {
-                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
-                from: unsafe {
-                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
-                },
-                offset: 4096 * gfn,
-                len: 4096,
-            };
-            unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_GUEST_MEMFD_COPY(),
-                    &copy,
-                ))
-                .into_empty_result()
-                .unwrap()
-            };
-
+        |_uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             *ret_gpa = 4096 * gfn;
             *ret_len = 4096;
         },

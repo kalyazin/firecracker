@@ -12,7 +12,7 @@ use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
-use std::{fmt, io, thread};
+use std::{fmt, io, ptr, thread};
 
 use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::{VcpuExit, VmFd};
@@ -26,7 +26,7 @@ use utils::sm::StateMachine;
 
 use crate::cpu_config::templates::{CpuConfiguration, GuestConfigError};
 use crate::logger::{IncMetric, METRICS};
-use crate::vstate::guest_memfd::{kvm_pre_fault_memory, KVM_PRE_FAULT_MEMORY};
+use crate::vstate::guest_memfd::{kvm_guest_memfd_copy, kvm_pre_fault_memory, KVM_GUEST_MEMFD_COPY, KVM_PRE_FAULT_MEMORY};
 use crate::vstate::vm::Vm;
 use crate::FcExitCode;
 
@@ -112,7 +112,17 @@ pub struct Vcpu {
 
     /// This is for sending faults to the handler process
     pub uds: UnixStream,
+
+    /// mem_src
+    pub mem_src_wrapper: ConstPtrWrapper,
+    /// guest_memfd
+    pub guest_memfd: File,
 }
+
+/// Wrapper around *const u8
+#[derive(Debug)]
+pub struct ConstPtrWrapper(pub *const u8);
+unsafe impl Send for ConstPtrWrapper {}
 
 impl Vcpu {
     thread_local!(static TLS_VCPU_PTR: VcpuCell = Cell::new(None));
@@ -238,6 +248,8 @@ impl Vcpu {
             kvm_vcpu,
             kvm_fd,
             uds: stream,
+            mem_src_wrapper: ConstPtrWrapper(ptr::null()),
+            guest_memfd: unsafe { File::from_raw_fd(666) },
         })
     }
 
@@ -480,6 +492,7 @@ impl Vcpu {
         }
 
         let vcpu_fd = self.kvm_vcpu.fd.as_raw_fd();
+        let ConstPtrWrapper(mem_src) = self.mem_src_wrapper;
 
         match self.kvm_vcpu.fd.run() {
             Err(ref err) if err.errno() == libc::EINTR => {
@@ -494,6 +507,8 @@ impl Vcpu {
                 &mut self.uds,
                 vcpu_fd,
                 &self.writer,
+                mem_src,
+                &self.guest_memfd,
             ),
         }
     }
@@ -507,6 +522,8 @@ fn handle_kvm_exit(
     uds: &mut UnixStream,
     vcpu_fd: RawFd,
     mut writer: &File,
+    mem_src: *const u8,
+    guest_memfd: &File,
 ) -> Result<VcpuEmulation, VcpuError> {
     match emulation_result {
         Ok(run) => match run {
@@ -661,6 +678,31 @@ fn handle_kvm_exit(
 
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
+
+                println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                let start_time = Instant::now();
+
+                use std::os::raw::c_void;
+                let copy = kvm_guest_memfd_copy {
+                    guest_memfd: guest_memfd.as_raw_fd() as _,
+                    from: unsafe {
+                        mem_src.offset(ret_gpa as isize) as *const c_void
+                    },
+                    offset: ret_gpa,
+                    len: ret_len,
+                };
+                unsafe {
+                    SyscallReturnCode(ioctl_with_ref(
+                        kvm_fd,
+                        KVM_GUEST_MEMFD_COPY(),
+                        &copy,
+                    ))
+                    .into_empty_result()
+                    .unwrap()
+                };
+
+                let elapsed_time = start_time.elapsed();
+                println!("copied in {:?}", elapsed_time);
 
                 use crate::vstate::guest_memfd::{
                     kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,

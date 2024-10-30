@@ -9,7 +9,7 @@ mod uffd_utils;
 
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
-use std::{fs::File, time::Instant};
+use std::fs::File;
 
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
@@ -97,29 +97,6 @@ fn main() {
                 .map(|region| region.mapping.size as usize)
                 .collect();
             let mem_size = sizes[0];
-
-            println!("about to copy all pages in...");
-            let start_time = Instant::now();
-            use std::os::raw::c_void;
-            let copy = kvm_guest_memfd_copy {
-                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
-                from: unsafe {
-                    uffd_handler.backing_buffer.offset(0 as isize) as *const c_void
-                },
-                offset: 0,
-                len: mem_size as u64,
-            };
-            unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_GUEST_MEMFD_COPY(),
-                    &copy,
-                ))
-                .into_empty_result()
-                .unwrap()
-            };
-            let elapsed_time = start_time.elapsed();
-            println!("copied in {:?}", elapsed_time);
 
             *ret_gpa = 0;
             *ret_len = mem_size as u64;

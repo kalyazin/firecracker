@@ -134,7 +134,7 @@ use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use utils::terminal::Terminal;
 use utils::u64_to_usize;
-use vstate::guest_memfd::{kvm_async_pf_ready, kvm_pre_fault_memory, KVM_ASYNC_PF_READY, KVM_PRE_FAULT_MEMORY};
+use vstate::guest_memfd::{kvm_async_pf_ready, kvm_guest_memfd_copy, kvm_pre_fault_memory, KVM_ASYNC_PF_READY, KVM_GUEST_MEMFD_COPY, KVM_PRE_FAULT_MEMORY};
 use vstate::vcpu::{self, KvmVcpuConfigureError, StartThreadedError, VcpuSendEventError};
 
 use crate::arch::DeviceType;
@@ -1016,6 +1016,31 @@ impl MutEventSubscriber for Vmm {
                             "APF: rep: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
                             gpa, token, vcpu_idx, notpresent_injected
                         ); */
+
+                        println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                        let start_time = Instant::now();
+
+                        use std::os::raw::c_void;
+                        let copy = kvm_guest_memfd_copy {
+                            guest_memfd: self.guest_memfd.as_raw_fd() as _,
+                            from: unsafe {
+                                self.mem_src.offset(ret_gpa as isize) as *const c_void
+                            },
+                            offset: ret_gpa,
+                            len: ret_len,
+                        };
+                        unsafe {
+                            SyscallReturnCode(ioctl_with_ref(
+                                self.vm.fd(),
+                                KVM_GUEST_MEMFD_COPY(),
+                                &copy,
+                            ))
+                            .into_empty_result()
+                            .unwrap()
+                        };
+
+                        let elapsed_time = start_time.elapsed();
+                        println!("copied in {:?}", elapsed_time);
 
                         use crate::vstate::guest_memfd::{
                             kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
