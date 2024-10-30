@@ -18,6 +18,19 @@ use vmm::vstate::guest_memfd::{
     KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
 };
 
+fn produce_excs(gfns: &[u64], wnd: u64) -> Vec<(u64, u64)> {
+    gfns.iter().map(|gfn| {
+        let base = gfn / wnd * wnd;
+        (base, base + wnd - 1)
+    }).collect()
+}
+
+fn is_in_excs(excs: &Vec<(u64, u64)>, gfn: u64) -> bool {
+    excs.iter().any(|&(base, size)| {
+        gfn >= base && gfn <= size
+    })
+}
+
 fn main() {
     let mut args = std::env::args();
     let uffd_sock_path = args.nth(1).expect("No socket path given");
@@ -90,14 +103,45 @@ fn main() {
             // println!("cleared.");
         },
         |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
+            let wnd = 128;
+            let excs = produce_excs(&[0xbcc1a,
+                0x284f,
+                0x3ca5,
+                0x3ca1,
+                0xdf,
+                0x3ca6,
+                0x3ca2,
+                0x73f2,
+                0x73f3,
+                0x73f4,
+                0x73f5,
+                0x73f6,
+                0x73f7,
+                0x73f8,
+                0x73f9,
+                0x73fa,
+                0x73fb,
+                0x73fc
+                ], wnd);
+
+            let (offset, size) = if is_in_excs(&excs, gfn) {
+                println!("in excs, win: {:x} {:x}, gfn: {:x}", gfn / wnd * wnd, gfn / wnd * wnd + wnd - 1, gfn);
+                (4096 * gfn, 4096)
+            } else {
+                (4096 * (gfn / wnd * wnd), 4096 * wnd)
+            };
+
+            /* let offset = 4096 * (gfn / wnd * wnd);
+            let size = 4096 * wnd; */
+
             use std::os::raw::c_void;
             let copy = kvm_guest_memfd_copy {
                 guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
                 from: unsafe {
-                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
+                    uffd_handler.backing_buffer.offset(offset as isize) as *const c_void
                 },
-                offset: 4096 * gfn,
-                len: 4096,
+                offset: offset,
+                len: size,
             };
             unsafe {
                 SyscallReturnCode(ioctl_with_ref(
@@ -109,8 +153,8 @@ fn main() {
                 .unwrap()
             };
 
-            *ret_gpa = 4096 * gfn;
-            *ret_len = 4096;
+            *ret_gpa = offset;
+            *ret_len = size;
         },
     );
 }
