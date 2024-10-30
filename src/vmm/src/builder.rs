@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::{self, Seek, SeekFrom};
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
+use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use event_manager::{MutEventSubscriber, SubscriberOps};
@@ -262,6 +263,7 @@ fn create_vmm_and_vcpus(
         vcpu_fds: Vec::new(),
         vcpus_exit_evt,
         reader,
+        mem_src: ptr::null_mut(),
         resource_allocator,
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
@@ -557,6 +559,33 @@ pub fn build_microvm_from_snapshot(
             ],
         )
         .unwrap();
+
+    // Receive memory source file
+    let mut buf = vec![0; 64];
+    let (size, mem_src_file_opt) = socket.recv_with_fd(& mut buf).unwrap();
+    if size == 0 {
+        panic!("recv mem src file failed")
+    }
+    let mem_src_file = mem_src_file_opt.unwrap();
+    let file_meta = mem_src_file
+        .metadata()
+        .expect("can not get mem src file metadata");
+    let mem_src_size = file_meta.len() as usize;
+
+    let ret = unsafe {
+        libc::mmap(
+            ptr::null_mut(),
+            mem_src_size,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE,
+            mem_src_file.as_raw_fd(),
+            0,
+        )
+    };
+    if ret == libc::MAP_FAILED {
+        panic!("mmap on backing file failed");
+    }
+    vmm.mem_src = ret.cast();
 
     // We don't want to drop it as we'll use it for fault notifications caused VM exits.
     std::mem::forget(socket);

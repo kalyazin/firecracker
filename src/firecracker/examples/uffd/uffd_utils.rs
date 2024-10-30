@@ -260,6 +260,13 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new(stream: UnixStream, backing_file: File, apf_stream: UnixStream) -> Self {
+        // Send our own fd straight away
+        let buf = b"mem src file";
+        let ret = stream.send_with_fd(&buf[..], backing_file.as_raw_fd()).unwrap();
+        if ret == 0 {
+            panic!("send mem src file failed")
+        }
+
         let file_meta = backing_file
             .metadata()
             .expect("can not get backing file metadata");

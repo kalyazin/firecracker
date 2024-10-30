@@ -328,6 +328,8 @@ pub struct Vmm {
     vcpus_exit_evt: EventFd,
     // Pipe
     reader: File,
+    // Memory source
+    mem_src: *mut u8,
 
     // Allocator for guest resrouces
     resource_allocator: ResourceAllocator,
