@@ -1038,7 +1038,7 @@ impl MutEventSubscriber for Vmm {
                         }
 
                         if ret_len != 4096 {
-                            println!("about to prefault all pages in...");
+                            println!("about to prefault all pages in gpa {ret_gpa} size {ret_len}...");
                             let start_time = Instant::now();
                             let pre_fault = kvm_pre_fault_memory {
                                 gpa: ret_gpa,
