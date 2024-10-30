@@ -7,10 +7,11 @@
 
 mod uffd_utils;
 
-use std::os::fd::AsRawFd;
+use std::{os::fd::AsRawFd, time::Instant};
 use std::os::unix::net::UnixListener;
 use std::fs::File;
 
+use libc::madvise;
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
@@ -100,6 +101,36 @@ fn main() {
 
             *ret_gpa = 0;
             *ret_len = mem_size as u64;
+
+            // Populate the memory region with write-combined data
+            println!("about to madvise all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            let start_time = Instant::now();
+
+            use std::os::raw::c_void;
+            use libc::MADV_POPULATE_WRITE;
+            let result = unsafe {
+                madvise(
+                    uffd_handler.memfd_addr.offset(*ret_gpa as isize) as *mut c_void,
+                    *ret_len as usize,
+                    MADV_POPULATE_WRITE
+                )
+            };
+            if result != 0 {
+                panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
+            }
+            let elapsed_time = start_time.elapsed();
+            println!("madvised in {:?}", elapsed_time);
+
+            let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
+            let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
+
+            println!("about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            let start_time = Instant::now();
+            unsafe {
+                std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
+            }
+            let elapsed_time = start_time.elapsed();
+            println!("copied in {:?}", elapsed_time);
         },
     );
 }

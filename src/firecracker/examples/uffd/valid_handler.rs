@@ -10,6 +10,7 @@ mod uffd_utils;
 use std::os::unix::net::UnixListener;
 use std::{fs::File, os::fd::AsRawFd};
 
+use libc::madvise;
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
@@ -89,9 +90,30 @@ fn main() {
 
             // println!("cleared.");
         },
-        |_uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
+        |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             *ret_gpa = 4096 * gfn;
             *ret_len = 4096;
+
+            // Populate the memory region with write-combined data
+            use std::os::raw::c_void;
+            use libc::MADV_POPULATE_WRITE;
+            let result = unsafe {
+                madvise(
+                    uffd_handler.memfd_addr.offset(*ret_gpa as isize) as *mut c_void,
+                    *ret_len as usize,
+                    MADV_POPULATE_WRITE
+                )
+            };
+            if result != 0 {
+                panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
+            }
+
+            let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
+            let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
+            }
         },
     );
 }

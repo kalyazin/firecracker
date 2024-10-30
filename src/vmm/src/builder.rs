@@ -577,13 +577,14 @@ pub fn build_microvm_from_snapshot(
             ptr::null_mut(),
             mem_src_size,
             libc::PROT_READ,
-            libc::MAP_PRIVATE,
+            libc::MAP_SHARED,
             mem_src_file.as_raw_fd(),
             0,
         )
     };
     if ret == libc::MAP_FAILED {
-        panic!("mmap on backing file failed");
+        panic!("mmap on backing file {} size {} failed: {}",
+            mem_src_file.as_raw_fd(), mem_src_size, io::Error::last_os_error());
     }
     vmm.mem_src = ret.cast();
 

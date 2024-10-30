@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
@@ -12,7 +13,7 @@ use std::os::unix::net::UnixStream;
 use std::ptr;
 
 use kvm_ioctls::VmFd;
-use libc::iovec;
+use libc::{ftruncate, iovec, memfd_create};
 use serde::{Deserialize, Serialize};
 use userfaultfd::{Error, Uffd};
 use utils::eventfd::EventFd;
@@ -67,6 +68,7 @@ pub struct UffdHandler {
     uffd: Uffd,
     // For copying pages in
     pub guest_memfd_addr: *mut u8,
+    pub memfd_addr: *mut u8,
 }
 
 pub enum FromUnixStreamResult {
@@ -79,6 +81,7 @@ impl UffdHandler {
         stream: &UnixStream,
         backing_buffer: *const u8,
         size: usize,
+        memfd_addr: *mut u8,
     ) -> FromUnixStreamResult {
         let mut message_buf = vec![0u8; 1024];
         use core::ffi::c_void;
@@ -159,6 +162,7 @@ impl UffdHandler {
                 kvm_fd,
                 uffd,
                 guest_memfd_addr: ret.cast(),
+                memfd_addr,
             })
         } else {
             let gpa: u64 = u64::from_be_bytes(message_buf.as_slice().try_into().unwrap());
@@ -256,17 +260,11 @@ pub struct Runtime {
     backing_memory: *mut u8,
     backing_memory_size: usize,
     eventfds: HashMap<i32, UffdHandler>,
+    memfd_addr: *mut u8,
 }
 
 impl Runtime {
     pub fn new(stream: UnixStream, backing_file: File, apf_stream: UnixStream) -> Self {
-        // Send our own fd straight away
-        let buf = b"mem src file";
-        let ret = stream.send_with_fd(&buf[..], backing_file.as_raw_fd()).unwrap();
-        if ret == 0 {
-            panic!("send mem src file failed")
-        }
-
         let file_meta = backing_file
             .metadata()
             .expect("can not get backing file metadata");
@@ -287,6 +285,39 @@ impl Runtime {
             panic!("mmap on backing file failed");
         }
 
+        let name = CString::new("memfd").unwrap();
+        let memfd = unsafe { memfd_create(name.as_ptr(), 0) };
+        if memfd < 0 {
+            panic!("Failed to create memfd: {}", std::io::Error::last_os_error());
+        }
+        let retmfd = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                backing_memory_size,
+                libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                memfd.as_raw_fd(),
+                0,
+            )
+        };
+        if retmfd == libc::MAP_FAILED {
+            panic!("mmap on memfd file failed");
+        }
+
+        let new_size = backing_memory_size;
+        let result = unsafe { ftruncate(memfd.as_raw_fd(), new_size.try_into().unwrap()) };
+        if result != 0 {
+            panic!("Failed to resize memfd: {}", std::io::Error::last_os_error());
+        }
+
+        // Send our own fd straight away
+        let buf = b"mem src file";
+        // let ret = stream.send_with_fd(&buf[..], backing_file.as_raw_fd()).unwrap();
+        let retsend = stream.send_with_fd(&buf[..], memfd.as_raw_fd()).unwrap();
+        if retsend == 0 {
+            panic!("send mem src file failed")
+        }
+
         Self {
             stream,
             apf_stream,
@@ -294,6 +325,7 @@ impl Runtime {
             backing_memory: ret.cast(),
             backing_memory_size,
             eventfds: HashMap::default(),
+            memfd_addr: retmfd.cast(),
         }
     }
 
@@ -353,6 +385,7 @@ impl Runtime {
                             &self.stream,
                             self.backing_memory,
                             self.backing_memory_size,
+                            self.memfd_addr,
                         );
 
                         match result {
