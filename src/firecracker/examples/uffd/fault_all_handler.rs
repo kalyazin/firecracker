@@ -103,7 +103,7 @@ fn main() {
             *ret_len = mem_size as u64;
 
             // Populate the memory region with write-combined data
-            println!("about to madvise all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            println!("about to madvise write all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
             let start_time = Instant::now();
 
             use std::os::raw::c_void;
