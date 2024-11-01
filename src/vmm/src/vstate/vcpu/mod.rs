@@ -16,7 +16,7 @@ use std::{fmt, io, ptr, thread};
 
 use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::{VcpuExit, VmFd};
-use libc::{c_int, c_void, madvise, siginfo_t};
+use libc::{c_int, c_void, /* madvise,  */siginfo_t};
 use log::{error, info, warn};
 use seccompiler::{BpfProgram, BpfProgramRef};
 use utils::errno;
@@ -678,11 +678,11 @@ fn handle_kvm_exit(
 
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
+                use std::os::raw::c_void;
 
-                println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                /* println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                 let start_time = Instant::now();
 
-                use std::os::raw::c_void;
                 use libc::MADV_POPULATE_READ;
                 let result = unsafe {
                     madvise(
@@ -695,7 +695,7 @@ fn handle_kvm_exit(
                     panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
                 }
                 let elapsed_time = start_time.elapsed();
-                println!("madvised in {:?}", elapsed_time);
+                println!("madvised in {:?}", elapsed_time); */
 
                 println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                 let start_time = Instant::now();

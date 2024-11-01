@@ -126,7 +126,7 @@ use device_manager::resources::ResourceAllocator;
 #[cfg(target_arch = "x86_64")]
 use devices::acpi::vmgenid::VmGenIdError;
 use event_manager::{EventManager as BaseEventManager, EventOps, Events, MutEventSubscriber};
-use libc::madvise;
+/* use libc::madvise; */
 use seccompiler::BpfProgram;
 use userfaultfd::Uffd;
 use utils::epoll::EventSet;
@@ -1018,10 +1018,11 @@ impl MutEventSubscriber for Vmm {
                             gpa, token, vcpu_idx, notpresent_injected
                         ); */
 
-                        println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                        use std::os::raw::c_void;
+
+                        /* println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                         let start_time = Instant::now();
 
-                        use std::os::raw::c_void;
                         use libc::MADV_POPULATE_READ;
                         let result = unsafe {
                             madvise(
@@ -1034,7 +1035,7 @@ impl MutEventSubscriber for Vmm {
                             panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
                         }
                         let elapsed_time = start_time.elapsed();
-                        println!("madvised in {:?}", elapsed_time);
+                        println!("madvised in {:?}", elapsed_time); */
 
                         println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                         let start_time = Instant::now();

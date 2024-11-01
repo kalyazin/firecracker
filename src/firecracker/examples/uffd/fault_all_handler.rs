@@ -103,10 +103,11 @@ fn main() {
             *ret_len = mem_size as u64;
 
             // Populate the memory region with write-combined data
+            use std::os::raw::c_void;
+
             println!("about to madvise write all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
             let start_time = Instant::now();
 
-            use std::os::raw::c_void;
             use libc::MADV_POPULATE_WRITE;
             let result = unsafe {
                 madvise(
