@@ -10,7 +10,7 @@ mod uffd_utils;
 use std::os::unix::net::UnixListener;
 use std::{fs::File, os::fd::AsRawFd};
 
-use libc::madvise;
+use libc::pwrite64;
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
@@ -95,7 +95,7 @@ fn main() {
             *ret_len = 4096;
 
             // Populate the memory region with write-combined data
-            use std::os::raw::c_void;
+            /* use std::os::raw::c_void;
             use libc::MADV_POPULATE_WRITE;
             let result = unsafe {
                 madvise(
@@ -106,14 +106,32 @@ fn main() {
             };
             if result != 0 {
                 panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
-            }
+            } */
 
             let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
-            let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
+            /* let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
 
             unsafe {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
+            } */
+
+            //println!("KAIN: trying ret_gpa {ret_gpa:x} ret_len {ret_len}");
+
+            unsafe {
+                let bytes_written = pwrite64(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    src as _,
+                    *ret_len as _,
+                    *ret_gpa as _
+                );
+
+                if bytes_written == -1 {
+                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                }
+                //println!("Wrote {} bytes", bytes_written);
             }
+
+            //println!("KAIN: done ret_gpa {ret_gpa:x} ret_len {ret_len}");
         },
     );
 }

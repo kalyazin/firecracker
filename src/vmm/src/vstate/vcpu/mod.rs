@@ -597,6 +597,11 @@ fn handle_kvm_exit(
             VcpuExit::MemoryFault { flags, gpa, size } => {
                 let async_pf = (flags & (1 << 5)) != 0;
 
+                /* println!(
+                        "KAIN: apf {async_pf} flags 0x{:x} size/token 0x{:x} gpa {:x}",
+                        flags, size, gpa
+                    ); */
+
                 if async_pf {
                     /* println!(
                         "APF: flags 0x{:x} size/token 0x{:x} gpa {:x}",
@@ -697,7 +702,7 @@ fn handle_kvm_exit(
                 let elapsed_time = start_time.elapsed();
                 println!("madvised in {:?}", elapsed_time); */
 
-                println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                /* println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                 let start_time = Instant::now();
 
                 let copy = kvm_guest_memfd_copy {
@@ -719,7 +724,7 @@ fn handle_kvm_exit(
                 };
 
                 let elapsed_time = start_time.elapsed();
-                println!("copied in {:?}", elapsed_time);
+                println!("copied in {:?}", elapsed_time); */
 
                 use crate::vstate::guest_memfd::{
                     kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
@@ -731,6 +736,8 @@ fn handle_kvm_exit(
                     attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
                     ..Default::default()
                 };
+
+                // println!("KAIN: ret_gpa {ret_gpa:x} ret_len {ret_len}");
 
                 unsafe {
                     SyscallReturnCode(ioctl_with_ref(

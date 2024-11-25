@@ -1037,7 +1037,7 @@ impl MutEventSubscriber for Vmm {
                         let elapsed_time = start_time.elapsed();
                         println!("madvised in {:?}", elapsed_time); */
 
-                        println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+                        /* println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
                         let start_time = Instant::now();
 
                         let copy = kvm_guest_memfd_copy {
@@ -1059,7 +1059,7 @@ impl MutEventSubscriber for Vmm {
                         };
 
                         let elapsed_time = start_time.elapsed();
-                        println!("copied in {:?}", elapsed_time);
+                        println!("copied in {:?}", elapsed_time); */
 
                         use crate::vstate::guest_memfd::{
                             kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,

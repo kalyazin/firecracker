@@ -11,7 +11,7 @@ use std::{os::fd::AsRawFd, time::Instant};
 use std::os::unix::net::UnixListener;
 use std::fs::File;
 
-use libc::madvise;
+use libc::pwrite64;
 use uffd_utils::{Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
@@ -102,7 +102,7 @@ fn main() {
             *ret_gpa = 0;
             *ret_len = mem_size as u64;
 
-            // Populate the memory region with write-combined data
+            /* // Populate the memory region with write-combined data
             use std::os::raw::c_void;
 
             println!("about to madvise write all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
@@ -120,10 +120,10 @@ fn main() {
                 panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
             }
             let elapsed_time = start_time.elapsed();
-            println!("madvised in {:?}", elapsed_time);
+            println!("madvised in {:?}", elapsed_time); */
 
             let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
-            let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
+            /* let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
 
             println!("about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
             let start_time = Instant::now();
@@ -131,7 +131,42 @@ fn main() {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
             }
             let elapsed_time = start_time.elapsed();
+            println!("copied in {:?}", elapsed_time); */
+
+            // println!("KAIN: trying ret_gpa {ret_gpa:x} ret_len {ret_len}");
+
+            println!("about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            let start_time = Instant::now();
+            unsafe {
+                let bytes_written = pwrite64(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    src as _,
+                    2 * 1024 * 1024 * 1024, // *ret_len as _,
+                    *ret_gpa as _
+                );
+
+                if bytes_written == -1 {
+                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                }
+                println!("Wrote {} bytes", bytes_written);
+            }
+            unsafe {
+                let bytes_written = pwrite64(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    (src + 2 * 1024 * 1024 * 1024) as _,
+                    1 * 1024 * 1024 * 1024, //*ret_len as _,
+                    2 * 1024 * 1024 * 1024 // *ret_gpa as _
+                );
+
+                if bytes_written == -1 {
+                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                }
+                println!("Wrote {} bytes", bytes_written);
+            }
+            let elapsed_time = start_time.elapsed();
             println!("copied in {:?}", elapsed_time);
+
+            // println!("KAIN: done ret_gpa {ret_gpa:x} ret_len {ret_len}");
         },
     );
 }
