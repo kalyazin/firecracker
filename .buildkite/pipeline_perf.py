@@ -123,9 +123,9 @@ for test in tests:
 # to a new kernel version tagged "linux_6.1-pinned"
 pins = {
     # TODO: Unpin when performance instability on m6i/5.10 has gone.
-    "linux_5.10-pinned": {"instance": "m6i.metal", "kv": "linux_5.10"},
+    # "linux_5.10-pinned": {"instance": "m6i.metal", "kv": "linux_5.10"},
     # TODO: Unpin when performance instability on m6i/6.1 has gone.
-    "linux_6.1-pinned": {"instance": "m6i.metal", "kv": "linux_6.1"},
+    # "linux_6.1-pinned": {"instance": "m6i.metal", "kv": "linux_6.1"},
 }
 
 
