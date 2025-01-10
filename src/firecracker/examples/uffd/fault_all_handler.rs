@@ -52,6 +52,7 @@ fn main() {
 
             let gfn = event;
 
+            println!("copying one {}...", gfn);
             use std::os::raw::c_void;
             let copy = kvm_guest_memfd_copy {
                 guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
@@ -70,6 +71,7 @@ fn main() {
                 .into_empty_result()
                 .unwrap()
             }
+            println!("copied");
 
             // println!("about to clear uffd memattr...");
             let attributes = kvm_memory_attributes {
