@@ -33,7 +33,16 @@ fn main() {
         |uffd_handler: &mut UffdHandler| {
             // Read an event from the userfaultfd.
             let _event = uffd_handler
-                .read_event()
+                .read_event_uffd()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
+
+            // FIXME: this handler is not functional.
+        },
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let _event = uffd_handler
+                .read_event_eventfd()
                 .expect("Failed to read uffd_msg")
                 .expect("uffd_msg not ready");
 

@@ -77,7 +77,8 @@ where
     fn guest_memfd_backed(
         associated_vm: &VmFd,
         mem_size_mib: u64,
-    ) -> Result<(Self, File), MemoryError>;
+        base: *mut u8,
+    ) -> Result<(Self, Self, File), MemoryError>;
 
     /// Creates a GuestMemoryMmap from raw regions.
     fn from_raw_regions(
@@ -92,6 +93,14 @@ where
         track_dirty_pages: bool,
         shared: bool,
     ) -> Result<Self, MemoryError>;
+
+    /// Like above, but use base as the base address
+    fn from_raw_regions_file_hybrid(
+        regions: Vec<(FileOffset, GuestAddress, usize)>,
+        track_dirty_pages: bool,
+        shared: bool,
+        base: *mut u8,
+) -> Result<Self, MemoryError>;
 
     /// Creates a GuestMemoryMmap given a `file` containing the data
     /// and a `state` containing mapping information.
@@ -171,12 +180,23 @@ impl GuestMemoryExtension for GuestMemoryMmap {
     fn guest_memfd_backed(
         associated_vm: &VmFd,
         mem_size_mib: u64,
-    ) -> Result<(Self, File), MemoryError> {
+        base: *mut u8,
+    ) -> Result<(Self, Self, File), MemoryError> {
         let guest_memfd =
             crate::vstate::guest_memfd::create_guest_memfd(associated_vm, mem_size_mib << 20)?;
 
         let mut offset: u64 = 0;
         let regions = crate::arch::arch_memory_regions((mem_size_mib as usize) << 20)
+            .iter()
+            .map(|(guest_address, region_size)| {
+                let file_clone = guest_memfd.try_clone().map_err(MemoryError::FileError)?;
+                let file_offset = FileOffset::new(file_clone, offset);
+                offset += *region_size as u64;
+                Ok((file_offset, *guest_address, *region_size))
+            })
+            .collect::<Result<Vec<_>, MemoryError>>()?;
+
+        let regions_2 = crate::arch::arch_memory_regions((mem_size_mib as usize) << 20)
             .iter()
             .map(|(guest_address, region_size)| {
                 let file_clone = guest_memfd.try_clone().map_err(MemoryError::FileError)?;
@@ -192,6 +212,7 @@ impl GuestMemoryExtension for GuestMemoryMmap {
         // CoW)
         Ok((
             Self::from_raw_regions_file(regions, false, true)?,
+            Self::from_raw_regions_file_hybrid(regions_2, false, true, base)?,
             guest_memfd,
         ))
     }
@@ -272,6 +293,30 @@ impl GuestMemoryExtension for GuestMemoryMmap {
                         .map_err(MemoryError::MmapRegionError)?
                 };
 
+                GuestRegionMmap::new(region, guest_address).map_err(MemoryError::VmMemoryError)
+            })
+            .collect::<Result<Vec<_>, MemoryError>>()?;
+
+        GuestMemoryMmap::from_regions(regions).map_err(MemoryError::VmMemoryError)
+    }
+
+    fn from_raw_regions_file_hybrid(
+        regions: Vec<(FileOffset, GuestAddress, usize)>,
+        _track_dirty_pages: bool,
+        _shared: bool,
+        base: *mut u8,
+    ) -> Result<Self, MemoryError> {
+        let regions = regions
+            .into_iter()
+            .map(|(file_offset, guest_address, region_size)| {
+                let region = unsafe {
+                    MmapRegionBuilder::new(region_size)
+                        .with_file_offset(file_offset)
+                        .with_raw_mmap_pointer(base)
+                        .build()
+                        .map_err(MemoryError::MmapRegionError)?
+                };
+                // let region = unsafe { MmapRegion::build_raw(base, region_size, prot, flags) };
                 GuestRegionMmap::new(region, guest_address).map_err(MemoryError::VmMemoryError)
             })
             .collect::<Result<Vec<_>, MemoryError>>()?;

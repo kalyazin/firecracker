@@ -189,7 +189,7 @@ impl Vm {
             slot,
             guest_phys_addr: region.start_addr().raw_value(),
             memory_size: region.len(),
-            userspace_addr: unsafe {
+            /* userspace_addr: unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
                     region.len() as _,
@@ -198,7 +198,9 @@ impl Vm {
                     -1,
                     0,
                 ) as _
-            },
+            }, */
+            // FIXME for multiple regions
+            userspace_addr: region.get_host_address(vm_memory::MemoryRegionAddress(0)).unwrap() as u64,
             guest_memfd_offset: region.start_addr().raw_value(),
             guest_memfd: guest_memfd.as_raw_fd() as u32,
             flags: KVM_MEM_PRIVATE,

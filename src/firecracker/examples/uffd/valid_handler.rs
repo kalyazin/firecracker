@@ -45,12 +45,36 @@ fn main() {
         |uffd_handler: &mut UffdHandler| {
             // Read an event from the userfaultfd.
             let event = uffd_handler
-                .read_event()
+                .read_event_uffd()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
+
+            let useraddr = event;
+            let region_base = uffd_handler.mem_regions[0].mapping.base_host_virt_addr;
+
+            let gpa = useraddr - region_base;
+            let gfn = gpa / 4096;
+
+            use std::os::raw::c_void;
+            let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
+            println!("copying (uffd) {gfn} to {dst:?}...");
+            let ret = unsafe {
+                uffd_handler.uffd.copy(uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void,
+                dst, 4096, true).unwrap()
+            };
+            assert!(ret > 0);
+            println!("continued.");
+        },
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let event = uffd_handler
+                .read_event_eventfd()
                 .expect("Failed to read uffd_msg")
                 .expect("uffd_msg not ready");
 
             let gfn = event;
 
+            println!("copying one {}...", gfn);
             use std::os::raw::c_void;
             let copy = kvm_guest_memfd_copy {
                 guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
@@ -69,6 +93,7 @@ fn main() {
                 .into_empty_result()
                 .unwrap()
             }
+            println!("copied");
 
             // println!("about to clear uffd memattr...");
             let attributes = kvm_memory_attributes {
@@ -115,8 +140,6 @@ fn main() {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
             } */
 
-            //println!("KAIN: trying ret_gpa {ret_gpa:x} ret_len {ret_len}");
-
             unsafe {
                 let bytes_written = pwrite64(
                     uffd_handler.guest_memfd.as_raw_fd(),
@@ -130,8 +153,6 @@ fn main() {
                 }
                 //println!("Wrote {} bytes", bytes_written);
             }
-
-            //println!("KAIN: done ret_gpa {ret_gpa:x} ret_len {ret_len}");
         },
     );
 }

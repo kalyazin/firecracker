@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use userfaultfd::{Error, Uffd};
 use utils::eventfd::EventFd;
 use utils::sock_ctrl_msg::ScmSocket;
+use vmm::arch::PAGE_SIZE;
 use vmm::vstate::guest_memfd::read_fault;
 
 // This is the same with the one used in src/vmm.
@@ -65,7 +66,7 @@ pub struct UffdHandler {
     pub guest_memfd: File,
     // For clearing UFFD memattr
     pub kvm_fd: VmFd,
-    uffd: Uffd,
+    pub uffd: Uffd,
     // For copying pages in
     pub guest_memfd_addr: *mut u8,
     pub memfd_addr: *mut u8,
@@ -89,7 +90,7 @@ impl UffdHandler {
             iov_base: message_buf.as_mut_ptr() as *mut c_void,
             iov_len: message_buf.len(),
         }];
-        let mut fds = [0, 0, 0];
+        let mut fds = [0, 0, 0, 0];
         let (read_count, _fd_count) =
             unsafe { stream.recv_with_fds(&mut iovecs[..], &mut fds).unwrap() };
         message_buf.resize(read_count, 0);
@@ -110,7 +111,7 @@ impl UffdHandler {
             assert!(page_size.is_power_of_two());
 
             // This one is a dummy, not used.
-            let uffd = unsafe { Uffd::from_raw_fd(1000) };
+            let uffd = unsafe { Uffd::from_raw_fd(fds[3]) };
 
             let eventfd = unsafe { EventFd::from_raw_fd(fds[0].into_raw_fd()) };
             let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
@@ -171,7 +172,17 @@ impl UffdHandler {
         }
     }
 
-    pub fn read_event(&mut self) -> Result<Option<u64>, Error> {
+    pub fn read_event_uffd(&mut self) -> Result<Option<u64>, Error> {
+        let event = self.uffd.read_event().expect("failed to read uffd_msg").unwrap();
+        match event {
+            userfaultfd::Event::Pagefault { addr, .. } => {
+                Ok(Some(addr as _))
+            }
+            _ => panic!("Unexpected event on uffd"),
+        }
+    }
+
+    pub fn read_event_eventfd(&mut self) -> Result<Option<u64>, Error> {
         let _res = self.eventfd.read().unwrap();
         let gfn = read_fault(&self.kvm_fd);
         Ok(Some(gfn))
@@ -336,6 +347,7 @@ impl Runtime {
     /// uffd object passed in.
     pub fn run(
         &mut self,
+        pf_uffd_dispatch: impl Fn(&mut UffdHandler),
         pf_event_dispatch: impl Fn(&mut UffdHandler),
         pf_exit_dispatch: impl Fn(&mut UffdHandler, u64, &mut u64, &mut u64),
     ) {
@@ -375,7 +387,7 @@ impl Runtime {
                     break;
                 }
                 if pollfds[i].revents & libc::POLLHUP != 0 {
-                    panic!("sighup received!");
+                    panic!("sighup received on fd {}!", pollfds[i].fd);
                 }
                 if pollfds[i].revents & libc::POLLIN != 0 {
                     nready -= 1;
@@ -395,6 +407,13 @@ impl Runtime {
                                     events: libc::POLLIN,
                                     revents: 0,
                                 });
+
+                                pollfds.push(libc::pollfd {
+                                    fd: handler.uffd.as_raw_fd(),
+                                    events: libc::POLLIN,
+                                    revents: 0,
+                                });
+
                                 self.eventfds.insert(handler.eventfd.as_raw_fd(), handler);
 
                                 // If connection is closed, we can skip the socket from being
@@ -457,9 +476,13 @@ impl Runtime {
                                 }
                             }
                         }
+                    } else if self.eventfds.contains_key(&pollfds[i].fd) {
+                        // Handle eventfd event
+                        pf_event_dispatch(self.eventfds.get_mut(&pollfds[i].fd).unwrap());
                     } else {
                         // Handle one of uffd page faults
-                        pf_event_dispatch(self.eventfds.get_mut(&pollfds[i].fd).unwrap());
+                        // FIXME: only supports one handler
+                        pf_uffd_dispatch(self.eventfds.iter_mut().next().unwrap().1);
                     }
                 }
             }

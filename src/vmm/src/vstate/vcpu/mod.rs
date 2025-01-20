@@ -598,7 +598,7 @@ fn handle_kvm_exit(
                 let async_pf = (flags & (1 << 5)) != 0;
 
                 /* println!(
-                        "KAIN: apf {async_pf} flags 0x{:x} size/token 0x{:x} gpa {:x}",
+                        "apf {async_pf} flags 0x{:x} size/token 0x{:x} gpa {:x}",
                         flags, size, gpa
                     ); */
 
@@ -737,7 +737,7 @@ fn handle_kvm_exit(
                     ..Default::default()
                 };
 
-                // println!("KAIN: ret_gpa {ret_gpa:x} ret_len {ret_len}");
+                // println!("ret_gpa {ret_gpa:x} ret_len {ret_len}");
 
                 unsafe {
                     SyscallReturnCode(ioctl_with_ref(

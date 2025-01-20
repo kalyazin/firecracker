@@ -23,8 +23,10 @@ use linux_loader::loader::elf::Elf as Loader;
 use linux_loader::loader::pe::PE as Loader;
 use linux_loader::loader::KernelLoader;
 use seccompiler::BpfThreadMap;
-use userfaultfd::Uffd;
+use userfaultfd::{Uffd, UffdBuilder};
 use utils::eventfd::EventFd;
+use utils::ioctl::ioctl_with_ref;
+use utils::syscall::SyscallReturnCode;
 use utils::time::TimestampUs;
 use utils::u64_to_usize;
 use vm_memory::{GuestMemory, ReadVolatile};
@@ -34,7 +36,7 @@ use vm_superio::Serial;
 
 #[cfg(target_arch = "x86_64")]
 use crate::acpi;
-use crate::arch::InitrdConfig;
+use crate::arch::{InitrdConfig, PAGE_SIZE};
 #[cfg(target_arch = "aarch64")]
 use crate::construct_kvm_mpidrs;
 use crate::cpu_config::templates::{
@@ -77,6 +79,8 @@ use crate::vstate::memory::{GuestAddress, GuestMemoryExtension, GuestMemoryMmap}
 use crate::vstate::vcpu::{ConstPtrWrapper, Vcpu, VcpuConfig, VcpuError};
 use crate::vstate::vm::Vm;
 use crate::{device_manager, mem_size_mib, EventManager, Vmm, VmmError};
+
+use crate::vstate::guest_memfd::{kvm_memory_attributes, KVM_SET_MEMORY_ATTRIBUTES};
 
 /// Errors associated with starting the instance.
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
@@ -164,6 +168,7 @@ fn create_vmm_and_vcpus(
     instance_info: &InstanceInfo,
     event_manager: &mut EventManager,
     mem_size_mib: u64,
+    base: *mut u8,
     uffd: Option<Uffd>,
     track_dirty_pages: bool,
     vcpu_count: u8,
@@ -179,17 +184,14 @@ fn create_vmm_and_vcpus(
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
-    let (private_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib)
+    let (private_memory, hybrid_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib, base)
         .map_err(StartMicrovmError::GuestMemory)?;
 
-    vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
+    vm.memory_init(&hybrid_memory, &guest_memfd, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
     vm.uds = uds;
-
-    // We don't want to leak it.
-    // std::mem::forget(guest_memfd);
 
     let vcpus_exit_evt = EventFd::new(libc::EFD_NONBLOCK)
         .map_err(VmmError::EventFd)
@@ -306,6 +308,7 @@ pub fn build_microvm_for_boot(
         instance_info,
         event_manager,
         vm_resources.vm_config.mem_size_mib as u64,
+        0 as _,
         None,
         track_dirty_pages,
         vm_resources.vm_config.vcpu_count,
@@ -466,6 +469,27 @@ pub enum BuildMicrovmFromSnapshotError {
     VMGenIDUpdate(std::io::Error),
 }
 
+use kvm_bindings::Msrs;
+fn get_msr_value(saved_msrs: &[Msrs], msr_id: u32) -> u64 {
+    for msrs in saved_msrs {
+        // Get reference to the underlying kvm_msrs structure
+        let msrs_struct = msrs.as_fam_struct_ref();
+
+        // Get slice of MSR entries using nmsrs as length
+        // SAFETY: We trust that nmsrs correctly represents the number of entries
+        let entries = unsafe { msrs_struct.entries.as_slice(msrs_struct.nmsrs as usize) };
+
+        // Search for the specified MSR ID in entries
+        for entry in entries {
+            if entry.index == msr_id {
+                return entry.data
+            }
+        }
+    }
+
+    panic!("{msr_id} MSR not found");
+}
+
 /// Builds and starts a microVM based on the provided MicrovmState.
 ///
 /// An `Arc` reference of the built `Vmm` is also plugged in the `EventManager`, while another
@@ -518,12 +542,26 @@ pub fn build_microvm_from_snapshot(
 
     let socket_copy = unsafe { UnixStream::from_raw_fd(socket.as_raw_fd()) };
 
+    let uffd_real = if let Some(uffd_tmp) = uffd.as_ref() {
+        uffd_tmp.as_raw_fd()
+    } else {
+        panic!("no uffd")
+    };
+
+    let mut base: *mut u8 = 0 as _;
+    for mem_region in guest_memory.iter() {
+        base = mem_region.as_ptr();
+        println!("uffd region base {base:?}");
+        break;
+    }
+
     // Build Vmm.
     debug!("event_start: build microvm from snapshot");
     let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
         instance_info,
         event_manager,
         mem_size_mib(&guest_memory),
+        base,
         uffd,
         vm_resources.vm_config.track_dirty_pages,
         vm_resources.vm_config.vcpu_count,
@@ -531,6 +569,9 @@ pub fn build_microvm_from_snapshot(
         Some(socket_copy),
         Some(apf_stream),
     )?;
+
+    // This is to keep UFFD
+    std::mem::forget(guest_memory);
 
     // Create eventfd and cache it in VMM, so it isn't GC'ed.
     let eventfd = EventFd::new(libc::EFD_NONBLOCK).unwrap();
@@ -556,17 +597,19 @@ pub fn build_microvm_from_snapshot(
                 eventfd.as_raw_fd(),
                 guest_memfd.as_raw_fd(),
                 vmm.vm.fd().as_raw_fd(),
+                uffd_real,
             ],
         )
         .unwrap();
 
+    // FIXME: don't need this anymore
     // Receive memory source file
     let mut buf = vec![0; 64];
     let (size, mem_src_file_opt) = socket.recv_with_fd(& mut buf).unwrap();
     if size == 0 {
         panic!("recv mem src file failed")
     }
-    let mem_src_file = mem_src_file_opt.unwrap();
+    /* let mem_src_file = mem_src_file_opt.unwrap();
     let file_meta = mem_src_file
         .metadata()
         .expect("can not get mem src file metadata");
@@ -586,7 +629,7 @@ pub fn build_microvm_from_snapshot(
         panic!("mmap on backing file {} size {} failed: {}",
             mem_src_file.as_raw_fd(), mem_src_size, io::Error::last_os_error());
     }
-    vmm.mem_src = ret.cast();
+    vmm.mem_src = ret.cast(); */
 
     // We don't want to drop it as we'll use it for fault notifications caused VM exits.
     std::mem::forget(socket);
@@ -606,6 +649,75 @@ pub fn build_microvm_from_snapshot(
             }
         }
     }
+
+    let saved_msrs = &microvm_state.vcpu_states[0].saved_msrs;
+
+    const MSR_KVM_WALL_CLOCK_NEW: u32 = 0x4b56_4d00;
+    let wall_clock_value = get_msr_value(&saved_msrs, MSR_KVM_WALL_CLOCK_NEW);
+    let wall_clock_page = wall_clock_value & !(PAGE_SIZE as u64 - 1);
+
+    const MSR_KVM_SYSTEM_TIME_NEW: u32 = 0x4b56_4d01;
+    let system_time_value = get_msr_value(&saved_msrs, MSR_KVM_SYSTEM_TIME_NEW);
+    let system_time_page = system_time_value & !(PAGE_SIZE as u64 - 1);
+
+    const MSR_KVM_PV_EOI_EN: u32 = 0x4b56_4d04;
+    let pv_eoi_value = get_msr_value(&saved_msrs, MSR_KVM_PV_EOI_EN);
+    let pv_eoi_page = pv_eoi_value & !(PAGE_SIZE as u64 - 1);
+
+    // system time
+    println!("about to clear uffd memattr...");
+    let attributes = kvm_memory_attributes {
+        address: system_time_page, // 4096 * 10319,
+        size: 4096,
+        attributes: 0,
+        ..Default::default()
+    };
+
+    unsafe {
+        SyscallReturnCode(ioctl_with_ref(
+            &vmm.vm.fd().as_raw_fd(),
+            KVM_SET_MEMORY_ATTRIBUTES(),
+            &attributes,
+        ))
+        .into_empty_result()
+        .unwrap()
+    }
+
+    // wall clock
+    let attributes = kvm_memory_attributes {
+        address: wall_clock_page, // 4096 * 10318,
+        size: 4096,
+        attributes: 0,
+        ..Default::default()
+    };
+
+    unsafe {
+        SyscallReturnCode(ioctl_with_ref(
+            &vmm.vm.fd().as_raw_fd(),
+            KVM_SET_MEMORY_ATTRIBUTES(),
+            &attributes,
+        ))
+        .into_empty_result()
+        .unwrap()
+    }
+
+    let attributes = kvm_memory_attributes {
+        address: pv_eoi_page, // 4096 * 773146,
+        size: 4096,
+        attributes: 0,
+        ..Default::default()
+    };
+
+    unsafe {
+        SyscallReturnCode(ioctl_with_ref(
+            &vmm.vm.fd().as_raw_fd(),
+            KVM_SET_MEMORY_ATTRIBUTES(),
+            &attributes,
+        ))
+        .into_empty_result()
+        .unwrap()
+    }
+    println!("cleared.");
 
     // Restore vcpus kvm state.
     for (vcpu, state) in vcpus.iter_mut().zip(microvm_state.vcpu_states.iter()) {

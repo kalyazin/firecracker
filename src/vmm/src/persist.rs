@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use seccompiler::BpfThreadMap;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use userfaultfd::Uffd;
+use userfaultfd::{Uffd, UffdBuilder};
 use utils::u64_to_usize;
 
 #[cfg(target_arch = "aarch64")]
@@ -535,7 +535,35 @@ fn guest_memory_from_uffd(
     let (guest_memory, _backend_mappings) =
         create_guest_memory(mem_state, track_dirty_pages, huge_pages)?;
 
-    Ok((guest_memory, None))
+    let mut uffd_builder = UffdBuilder::new();
+
+    let uffd = uffd_builder
+        .close_on_exec(true)
+        .non_blocking(true)
+        .user_mode_only(false)
+        .create()
+        .map_err(GuestMemoryFromUffdError::Create)?;
+
+    for mem_region in guest_memory.iter() {
+        println!("registering {:?} size {}", mem_region.as_ptr(), mem_region.size());
+        // all
+        uffd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
+            .map_err(GuestMemoryFromUffdError::Register)?;
+
+        /* // wall clock
+        uffd.register(mem_region.as_ptr().wrapping_add(10318 * 4096).cast(), 4096)
+            .map_err(GuestMemoryFromUffdError::Register)?;
+
+        // system time
+        uffd.register(mem_region.as_ptr().wrapping_add(10319 * 4096).cast(), 4096)
+            .map_err(GuestMemoryFromUffdError::Register)?;
+
+        // PV EOI
+        uffd.register(mem_region.as_ptr().wrapping_add(773146 * 4096).cast(), 4096)
+            .map_err(GuestMemoryFromUffdError::Register)?; */
+    }
+
+    Ok((guest_memory, Some(uffd)))
 }
 
 fn create_guest_memory(
