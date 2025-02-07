@@ -45,12 +45,12 @@ IGNORED = [
     # Network throughput on m6a.metal
     {"instance": "m6a.metal", "performance_test": "test_network_tcp_throughput"},
     # Block throughput for 1 vcpu on m6g.metal/5.10
-    {
+    """ {
         "performance_test": "test_block_performance",
         "instance": "m6g.metal",
         "host_kernel": "linux-5.10",
         "vcpus": "1",
-    },
+    }, """
 ]
 
 
