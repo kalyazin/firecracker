@@ -11,7 +11,7 @@ use std::os::unix::net::UnixListener;
 use std::{fs::File, os::fd::AsRawFd};
 
 use libc::pwrite64;
-use uffd_utils::{Runtime, UffdHandler};
+use uffd_utils::{uffd_continue, Runtime, UffdHandler};
 use utils::ioctl::ioctl_with_ref;
 use utils::syscall::SyscallReturnCode;
 use vmm::vstate::guest_memfd::{
@@ -55,45 +55,22 @@ fn main() {
             let gpa = useraddr - region_base;
             let gfn = gpa / 4096;
 
-            use std::os::raw::c_void;
-            let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
-            println!("copying (uffd) {gfn} to {dst:?}...");
-            let ret = unsafe {
-                uffd_handler.uffd.copy(uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void,
-                dst, 4096, true).unwrap()
-            };
-            assert!(ret > 0);
-            println!("continued.");
-        },
-        |uffd_handler: &mut UffdHandler| {
-            // Read an event from the userfaultfd.
-            let event = uffd_handler
-                .read_event_eventfd()
-                .expect("Failed to read uffd_msg")
-                .expect("uffd_msg not ready");
-
-            let gfn = event;
-
-            println!("copying one {}...", gfn);
-            use std::os::raw::c_void;
-            let copy = kvm_guest_memfd_copy {
-                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
-                from: unsafe {
-                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
-                },
-                offset: 4096 * gfn,
-                len: 4096,
-            };
+            let src = uffd_handler.backing_buffer as u64 + gpa;
+            // println!("writing (uffd) {gfn}...");
             unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_GUEST_MEMFD_COPY(),
-                    &copy,
-                ))
-                .into_empty_result()
-                .unwrap()
+                let bytes_written = pwrite64(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    src as _,
+                    4096,
+                    (gfn * 4096).try_into().unwrap(),
+                );
+
+                if bytes_written == -1 {
+                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                }
+                //println!("Wrote {} bytes", bytes_written);
             }
-            println!("copied");
+            // println!("wrote.");
 
             // println!("about to clear uffd memattr...");
             let attributes = kvm_memory_attributes {
@@ -112,34 +89,74 @@ fn main() {
                 .into_empty_result()
                 .unwrap()
             }
+            // println!("cleared.");
 
+            let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
+            // println!("copying (uffd) {gfn} to {dst:?}...");
+            let ret = unsafe {
+                /* uffd_handler.uffd.copy(uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void,
+                dst, 4096, true).unwrap() */
+                uffd_continue(uffd_handler.uffd.as_raw_fd(), dst as _, 4096)
+            };
+            ret.unwrap();
+            // println!("continued.");
+        },
+        |uffd_handler: &mut UffdHandler| {
+            // Read an event from the userfaultfd.
+            let event = uffd_handler
+                .read_event_eventfd()
+                .expect("Failed to read uffd_msg")
+                .expect("uffd_msg not ready");
+
+            let gfn = event;
+
+            // println!("copying one {}...", gfn);
+            use std::os::raw::c_void;
+            let copy = kvm_guest_memfd_copy {
+                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
+                from: unsafe {
+                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
+                },
+                offset: 4096 * gfn,
+                len: 4096,
+            };
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_GUEST_MEMFD_COPY(),
+                    &copy,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
+            // println!("copied");
+
+            // println!("about to clear uffd memattr...");
+            let attributes = kvm_memory_attributes {
+                address: 4096 * gfn,
+                size: 4096,
+                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                ..Default::default()
+            };
+
+            unsafe {
+                SyscallReturnCode(ioctl_with_ref(
+                    &uffd_handler.kvm_fd,
+                    KVM_SET_MEMORY_ATTRIBUTES(),
+                    &attributes,
+                ))
+                .into_empty_result()
+                .unwrap()
+            }
             // println!("cleared.");
         },
         |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             *ret_gpa = 4096 * gfn;
             *ret_len = 4096;
 
-            // Populate the memory region with write-combined data
-            /* use std::os::raw::c_void;
-            use libc::MADV_POPULATE_WRITE;
-            let result = unsafe {
-                madvise(
-                    uffd_handler.memfd_addr.offset(*ret_gpa as isize) as *mut c_void,
-                    *ret_len as usize,
-                    MADV_POPULATE_WRITE
-                )
-            };
-            if result != 0 {
-                panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
-            } */
-
             let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
-            /* let dst = uffd_handler.memfd_addr as u64 + *ret_gpa;
 
-            unsafe {
-                std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
-            } */
-
+            // println!("copying (vmexit) {}...", gfn);
             unsafe {
                 let bytes_written = pwrite64(
                     uffd_handler.guest_memfd.as_raw_fd(),
@@ -153,6 +170,9 @@ fn main() {
                 }
                 //println!("Wrote {} bytes", bytes_written);
             }
+            // println!("copied");
+
+            // Can UFFDIO_CONTINUE, but need to exclude already processed to avoid EEXIST
         },
     );
 }
