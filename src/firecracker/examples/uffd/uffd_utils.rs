@@ -21,6 +21,48 @@ use utils::sock_ctrl_msg::ScmSocket;
 use vmm::arch::PAGE_SIZE;
 use vmm::vstate::guest_memfd::read_fault;
 
+use libc;
+use std::os::unix::io::RawFd;
+
+#[repr(C)]
+struct uffdio_continue {
+    range: uffdio_range,
+    mode: u64,
+    mapped: u64,
+}
+
+#[repr(C)]
+struct uffdio_range {
+    start: u64,
+    len: u64,
+}
+
+pub fn uffd_continue(uffd: RawFd, fault_addr: u64, len: u64) -> std::io::Result<()> {
+    let mut cont = uffdio_continue {
+        range: uffdio_range {
+            start: fault_addr,
+            len: len,
+        },
+        mode: 0,  // Normal continuation mode
+        mapped: 0,
+    };
+
+    // UFFDIO_CONTINUE is typically defined as _IOWR(0xAA, 6, struct uffdio_continue)
+    let ret = unsafe {
+        libc::ioctl(
+            uffd,
+            0xc020aa07u32 as i32, // UFFDIO_CONTINUE ioctl number
+            &mut cont
+        )
+    };
+
+    if ret == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(())
+}
+
 // This is the same with the one used in src/vmm.
 /// This describes the mapping between Firecracker base virtual address and offset in the
 /// buffer or file backend for a guest memory region. It is used to tell an external
