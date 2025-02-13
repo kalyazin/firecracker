@@ -175,7 +175,7 @@ fn create_vmm_and_vcpus(
     kvm_capabilities: Vec<KvmCapability>,
     uds: Option<UnixStream>,
     apf_stream: Option<UnixStream>,
-) -> Result<(Vmm, Vec<Vcpu>), StartMicrovmError> {
+) -> Result<(Vmm, Vec<Vcpu>, Option<GuestMemoryMmap>), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
     // Set up Kvm Vm and register memory regions.
@@ -184,10 +184,11 @@ fn create_vmm_and_vcpus(
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
+    // "hybrid_memory" is no longer used
     let (private_memory, hybrid_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib, base)
         .map_err(StartMicrovmError::GuestMemory)?;
 
-    vm.memory_init(&hybrid_memory, &guest_memfd, track_dirty_pages)
+    vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -259,7 +260,7 @@ fn create_vmm_and_vcpus(
         instance_info: instance_info.clone(),
         shutdown_exit_code: None,
         vm,
-        guest_memory: private_memory,
+        guest_memory: private_memory.clone(),
         uffd,
         vcpus_handles: Vec::new(),
         vcpu_fds: Vec::new(),
@@ -277,7 +278,7 @@ fn create_vmm_and_vcpus(
         apf_stream: apf_stream.unwrap(),
     };
 
-    Ok((vmm, vcpus))
+    Ok((vmm, vcpus, Some(private_memory)))
 }
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
@@ -304,7 +305,7 @@ pub fn build_microvm_for_boot(
 
     let cpu_template = vm_resources.vm_config.cpu_template.get_cpu_template()?;
 
-    let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
+    let (mut vmm, mut vcpus, _) = create_vmm_and_vcpus(
         instance_info,
         event_manager,
         vm_resources.vm_config.mem_size_mib as u64,
@@ -506,19 +507,8 @@ pub fn build_microvm_from_snapshot(
 ) -> Result<Arc<Mutex<Vmm>>, BuildMicrovmFromSnapshotError> {
     let mem_state = &microvm_state.memory_state;
 
-    let mut backend_mappings = Vec::with_capacity(guest_memory.num_regions());
-    for (mem_region, state_region) in guest_memory.iter().zip(mem_state.regions.iter()) {
-        backend_mappings.push(GuestRegionUffdMapping {
-            base_host_virt_addr: mem_region.as_ptr() as u64,
-            size: mem_region.size(),
-            offset: state_region.offset,
-            page_size_kib: 4096,
-        });
-    }
-
     // FIXME: Hardcoding the UDS socket path as it's awkward to bring it here.
     let uds_sock = "/mnt/host/uffd.sock";
-    let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
     let socket = UnixStream::connect(uds_sock).unwrap();
     use utils::sock_ctrl_msg::ScmSocket;
 
@@ -551,13 +541,13 @@ pub fn build_microvm_from_snapshot(
     let mut base: *mut u8 = 0 as _;
     for mem_region in guest_memory.iter() {
         base = mem_region.as_ptr();
-        println!("uffd region base {base:?}");
+        // println!("uffd region base {base:?}");
         break;
     }
 
     // Build Vmm.
     debug!("event_start: build microvm from snapshot");
-    let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
+    let (mut vmm, mut vcpus, private_memory) = create_vmm_and_vcpus(
         instance_info,
         event_manager,
         mem_size_mib(&guest_memory),
@@ -589,6 +579,36 @@ pub fn build_microvm_from_snapshot(
     };
     vmm.vm.fd().enable_cap(&cap).unwrap();
 
+    let private_memory_real = if let Some(private_memory_tmp) = private_memory.as_ref() {
+        private_memory_tmp
+    } else {
+        panic!("no private memory")
+    };
+
+    let mut backend_mappings = Vec::with_capacity(private_memory_real.num_regions());
+    for (mem_region, state_region) in private_memory_real.iter().zip(mem_state.regions.iter()) {
+        backend_mappings.push(GuestRegionUffdMapping {
+            base_host_virt_addr: mem_region.as_ptr() as u64,
+            size: mem_region.size(),
+            offset: state_region.offset,
+            page_size_kib: 4096,
+        });
+    }
+    let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
+
+    let mut uffd_builder = UffdBuilder::new();
+    let uffd_gmfd = uffd_builder
+        .close_on_exec(true)
+        .non_blocking(true)
+        .user_mode_only(false)
+        .create()
+        .unwrap();
+
+    for mem_region in private_memory.unwrap().iter() {
+        uffd_gmfd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
+            .unwrap();
+    }
+
     // Send all FDs to the UFFD handler.
     socket
         .send_with_fds(
@@ -597,7 +617,7 @@ pub fn build_microvm_from_snapshot(
                 eventfd.as_raw_fd(),
                 guest_memfd.as_raw_fd(),
                 vmm.vm.fd().as_raw_fd(),
-                uffd_real,
+                uffd_gmfd.as_raw_fd(),
             ],
         )
         .unwrap();
@@ -649,75 +669,6 @@ pub fn build_microvm_from_snapshot(
             }
         }
     }
-
-    let saved_msrs = &microvm_state.vcpu_states[0].saved_msrs;
-
-    const MSR_KVM_WALL_CLOCK_NEW: u32 = 0x4b56_4d00;
-    let wall_clock_value = get_msr_value(&saved_msrs, MSR_KVM_WALL_CLOCK_NEW);
-    let wall_clock_page = wall_clock_value & !(PAGE_SIZE as u64 - 1);
-
-    const MSR_KVM_SYSTEM_TIME_NEW: u32 = 0x4b56_4d01;
-    let system_time_value = get_msr_value(&saved_msrs, MSR_KVM_SYSTEM_TIME_NEW);
-    let system_time_page = system_time_value & !(PAGE_SIZE as u64 - 1);
-
-    const MSR_KVM_PV_EOI_EN: u32 = 0x4b56_4d04;
-    let pv_eoi_value = get_msr_value(&saved_msrs, MSR_KVM_PV_EOI_EN);
-    let pv_eoi_page = pv_eoi_value & !(PAGE_SIZE as u64 - 1);
-
-    // system time
-    println!("about to clear uffd memattr...");
-    let attributes = kvm_memory_attributes {
-        address: system_time_page, // 4096 * 10319,
-        size: 4096,
-        attributes: 0,
-        ..Default::default()
-    };
-
-    unsafe {
-        SyscallReturnCode(ioctl_with_ref(
-            &vmm.vm.fd().as_raw_fd(),
-            KVM_SET_MEMORY_ATTRIBUTES(),
-            &attributes,
-        ))
-        .into_empty_result()
-        .unwrap()
-    }
-
-    // wall clock
-    let attributes = kvm_memory_attributes {
-        address: wall_clock_page, // 4096 * 10318,
-        size: 4096,
-        attributes: 0,
-        ..Default::default()
-    };
-
-    unsafe {
-        SyscallReturnCode(ioctl_with_ref(
-            &vmm.vm.fd().as_raw_fd(),
-            KVM_SET_MEMORY_ATTRIBUTES(),
-            &attributes,
-        ))
-        .into_empty_result()
-        .unwrap()
-    }
-
-    let attributes = kvm_memory_attributes {
-        address: pv_eoi_page, // 4096 * 773146,
-        size: 4096,
-        attributes: 0,
-        ..Default::default()
-    };
-
-    unsafe {
-        SyscallReturnCode(ioctl_with_ref(
-            &vmm.vm.fd().as_raw_fd(),
-            KVM_SET_MEMORY_ATTRIBUTES(),
-            &attributes,
-        ))
-        .into_empty_result()
-        .unwrap()
-    }
-    println!("cleared.");
 
     // Restore vcpus kvm state.
     for (vcpu, state) in vcpus.iter_mut().zip(microvm_state.vcpu_states.iter()) {

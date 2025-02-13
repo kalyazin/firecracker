@@ -545,7 +545,7 @@ fn guest_memory_from_uffd(
         .map_err(GuestMemoryFromUffdError::Create)?;
 
     for mem_region in guest_memory.iter() {
-        println!("registering {:?} size {}", mem_region.as_ptr(), mem_region.size());
+        // println!("registering {:?} size {}", mem_region.as_ptr(), mem_region.size());
         // all
         uffd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
             .map_err(GuestMemoryFromUffdError::Register)?;
