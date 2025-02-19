@@ -15,7 +15,6 @@ fn main() {
     let mut args = std::env::args();
     let uffd_sock_path = args.nth(1).expect("No socket path given");
     let mem_file_path = args.next().expect("No memory file given");
-    let apf_sock_path = args.next().expect("No apf socket path given");
 
     let file = File::open(mem_file_path).expect("Cannot open memfile");
 
@@ -23,26 +22,12 @@ fn main() {
     let listener = UnixListener::bind(uffd_sock_path).expect("Cannot bind to socket path");
     let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
-    let apf_listener = UnixListener::bind(apf_sock_path).expect("Cannot bind to apf socket path");
-    let (apf_stream, _) = apf_listener
-        .accept()
-        .expect("Cannot listen on UDS APF socket");
-
-    let mut runtime = Runtime::new(stream, file, apf_stream);
+    let mut runtime = Runtime::new(stream, file);
     runtime.run(
-        |uffd_handler: &mut UffdHandler| {
+        |uffd_handler: &mut UffdHandler, _ret_gpa: &mut u64, _ret_len: &mut u64| {
             // Read an event from the userfaultfd.
             let _event = uffd_handler
                 .read_event_uffd()
-                .expect("Failed to read uffd_msg")
-                .expect("uffd_msg not ready");
-
-            // FIXME: this handler is not functional.
-        },
-        |uffd_handler: &mut UffdHandler| {
-            // Read an event from the userfaultfd.
-            let _event = uffd_handler
-                .read_event_eventfd()
                 .expect("Failed to read uffd_msg")
                 .expect("uffd_msg not ready");
 

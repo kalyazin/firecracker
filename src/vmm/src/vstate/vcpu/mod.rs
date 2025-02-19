@@ -97,6 +97,7 @@ pub struct Vcpu {
     /// File descriptor for vcpu to trigger exit event on vmm.
     exit_evt: EventFd,
     /// Pipe
+    reader: File,
     writer: File,
     /// The receiving end of events channel owned by the vcpu side.
     event_receiver: Receiver<VcpuEvent>,
@@ -214,7 +215,7 @@ impl Vcpu {
     /// * `index` - Represents the 0-based CPU index between [0, max vcpus).
     /// * `vm` - The vm to which this vcpu will get attached.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd, writer: File) -> Result<Self, VcpuError> {
+    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd, reader: File, writer: File) -> Result<Self, VcpuError> {
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
         let kvm_vcpu = KvmVcpu::new(index, vm).unwrap();
@@ -234,12 +235,13 @@ impl Vcpu {
 
         // FIXME: this is to forward the UDS (UFFD) socket into the Vcpu
         // FIXME: uncomment for taking a snapshot
-        // let raw = 999;
-        let raw = vm.uds.as_ref().unwrap().as_raw_fd();
+        let raw = 999;
+        // let raw = vm.uds.as_ref().unwrap().as_raw_fd();
         let stream = unsafe { UnixStream::from_raw_fd(raw) };
 
         Ok(Vcpu {
             exit_evt,
+            reader,
             writer,
             event_receiver,
             event_sender: Some(event_sender),
@@ -506,6 +508,7 @@ impl Vcpu {
                 &self.kvm_fd,
                 &mut self.uds,
                 vcpu_fd,
+                &self.reader,
                 &self.writer,
                 mem_src,
                 &self.guest_memfd,
@@ -521,6 +524,7 @@ fn handle_kvm_exit(
     kvm_fd: &VmFd,
     uds: &mut UnixStream,
     vcpu_fd: RawFd,
+    mut reader: &File,
     mut writer: &File,
     mem_src: *const u8,
     guest_memfd: &File,
@@ -672,10 +676,10 @@ fn handle_kvm_exit(
 
                 // FIXME: we should be checking that flags contain KVM_MEMORY_EXIT_FLAG_USERFAULT
                 let bytes = gpa.to_be_bytes();
-                let _ret = uds.write_all(&bytes);
+                let _ret = writer.write_all(&bytes);
 
                 let ack = &mut [0; 24];
-                let _ret = uds.read_exact(ack);
+                let _ret = reader.read_exact(ack);
 
                 let _one = u64::from_be_bytes(ack[..8].try_into().unwrap());
                 let ret_gpa = u64::from_be_bytes(ack[8..16].try_into().unwrap());
@@ -684,47 +688,6 @@ fn handle_kvm_exit(
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
                 use std::os::raw::c_void;
-
-                /* println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
-                let start_time = Instant::now();
-
-                use libc::MADV_POPULATE_READ;
-                let result = unsafe {
-                    madvise(
-                        mem_src.offset(ret_gpa as isize) as *mut c_void,
-                        ret_len as usize,
-                        MADV_POPULATE_READ
-                    )
-                };
-                if result != 0 {
-                    panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
-                }
-                let elapsed_time = start_time.elapsed();
-                println!("madvised in {:?}", elapsed_time); */
-
-                /* println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
-                let start_time = Instant::now();
-
-                let copy = kvm_guest_memfd_copy {
-                    guest_memfd: guest_memfd.as_raw_fd() as _,
-                    from: unsafe {
-                        mem_src.offset(ret_gpa as isize) as *const c_void
-                    },
-                    offset: ret_gpa,
-                    len: ret_len,
-                };
-                unsafe {
-                    SyscallReturnCode(ioctl_with_ref(
-                        kvm_fd,
-                        KVM_GUEST_MEMFD_COPY(),
-                        &copy,
-                    ))
-                    .into_empty_result()
-                    .unwrap()
-                };
-
-                let elapsed_time = start_time.elapsed();
-                println!("copied in {:?}", elapsed_time); */
 
                 use crate::vstate::guest_memfd::{
                     kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
@@ -736,8 +699,6 @@ fn handle_kvm_exit(
                     attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
                     ..Default::default()
                 };
-
-                // println!("ret_gpa {ret_gpa:x} ret_len {ret_len}");
 
                 unsafe {
                     SyscallReturnCode(ioctl_with_ref(

@@ -126,12 +126,14 @@ use device_manager::resources::ResourceAllocator;
 #[cfg(target_arch = "x86_64")]
 use devices::acpi::vmgenid::VmGenIdError;
 use event_manager::{EventManager as BaseEventManager, EventOps, Events, MutEventSubscriber};
-/* use libc::madvise; */
+use persist::FaultReply;
+use libc::iovec;
 use seccompiler::BpfProgram;
 use userfaultfd::Uffd;
 use utils::epoll::EventSet;
 use utils::eventfd::EventFd;
 use utils::ioctl::ioctl_with_ref;
+use utils::sock_ctrl_msg::ScmSocket;
 use utils::syscall::SyscallReturnCode;
 use utils::terminal::Terminal;
 use utils::u64_to_usize;
@@ -151,7 +153,7 @@ use crate::devices::virtio::block::device::Block;
 use crate::devices::virtio::net::Net;
 use crate::devices::virtio::{TYPE_BALLOON, TYPE_BLOCK, TYPE_NET};
 use crate::logger::{error, info, warn, MetricsError, METRICS};
-use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
+use crate::persist::{MicrovmState, MicrovmStateError, VmInfo, FaultRequest};
 use crate::rate_limiter::BucketUpdate;
 use crate::snapshot::Persist;
 use crate::vmm_config::instance_info::{InstanceInfo, VmState};
@@ -161,6 +163,9 @@ use crate::vstate::memory::{
 use crate::vstate::vcpu::VcpuState;
 pub use crate::vstate::vcpu::{Vcpu, VcpuConfig, VcpuEvent, VcpuHandle, VcpuResponse};
 pub use crate::vstate::vm::Vm;
+
+use std::io::ErrorKind;
+use serde_json::Deserializer;
 
 /// Shorthand type for the EventManager flavour used by Firecracker.
 pub type EventManager = BaseEventManager<Arc<Mutex<dyn MutEventSubscriber>>>;
@@ -329,6 +334,7 @@ pub struct Vmm {
     vcpus_exit_evt: EventFd,
     // Pipe
     reader: File,
+    writer: File,
     // Memory source
     mem_src: *mut u8,
 
@@ -344,8 +350,8 @@ pub struct Vmm {
     pub guest_memfd: File,
     /// eventfd
     pub eventfd: Option<i32>,
-    /// APF
-    apf_stream: UnixStream,
+    /// UFFD socket
+    uds_stream: UnixStream,
 }
 
 impl Vmm {
@@ -973,18 +979,28 @@ impl MutEventSubscriber for Vmm {
                     Ok(()) => {
                         let evt: u64 = u64::from_be_bytes(req.as_slice().try_into().unwrap());
 
-                        /* let gpa = evt & 0xffff_ffff;
+                        let gpa = evt & 0xffff_ffff;
                         let token = (evt >> 32) & 0xffff_f7ff;
                         let notpresent_injected = evt & (1 << (32 + 11)) != 0;
                         let vcpu_idx = evt & 0x7ff;
 
-                        println!(
+                        /* println!(
                             "APF: req: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
                             gpa, token, vcpu_idx, notpresent_injected
                         ); */
 
-                        let bytes = evt.to_be_bytes();
-                        self.apf_stream.write_all(&bytes).unwrap();
+                        let fault_request = FaultRequest {
+                            vcpu: vcpu_idx as _,
+                            offset: gpa & !0xfff,
+                            flags: notpresent_injected.into(),
+                            token: if notpresent_injected {
+                                Some(token as _)
+                            } else {
+                                None
+                            }
+                        };
+                        let fault_request_json = serde_json::to_string(&fault_request).unwrap();
+                        self.uds_stream.write(fault_request_json.as_bytes()).unwrap();
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                         break;
@@ -999,138 +1015,109 @@ impl MutEventSubscriber for Vmm {
                     }
                 }
             }
-        } else if source == self.apf_stream.as_raw_fd() && event_set == EventSet::IN {
-            let mut rep = [0u8; 24];
+        } else if source == self.uds_stream.as_raw_fd() && event_set == EventSet::IN {
+            let mut buffer = [0u8; 1024]; // or whatever size is appropriate
 
             loop {
-                match self.apf_stream.read_exact(&mut rep) {
-                    Ok(()) => {
-                        let evt = u64::from_be_bytes(rep[..8].try_into().unwrap());
-                        let ret_gpa = u64::from_be_bytes(rep[8..16].try_into().unwrap());
-                        let ret_len = u64::from_be_bytes(rep[16..].try_into().unwrap());
-                        let gpa = evt & 0xffff_ffff;
-                        let token = (evt >> 32) & 0xffff_f7ff;
-                        let notpresent_injected = evt & (1 << (32 + 11)) != 0;
-                        let vcpu_idx = evt & 0x7ff;
+                match self.uds_stream.read(&mut buffer) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        let json_str = String::from_utf8_lossy(&buffer[..n]);
+                        let deserializer = Deserializer::from_str(&json_str);
+                        let stream = deserializer.into_iter::<FaultReply>();
 
-                        /* println!(
-                            "APF: rep: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
-                            gpa, token, vcpu_idx, notpresent_injected
-                        ); */
+                        for result in stream {
+                            match result {
+                                Ok(fault_reply) => {
+                                    // println!("Received FaultReply: {:?}", fault_reply);
 
-                        use std::os::raw::c_void;
+                                    let evt: u64 = 0;
+                                    let ret_gpa: u64 = fault_reply.offset;
+                                    let ret_len: u64 = fault_reply.len;
+                                    let gpa: u64 = 0;
+                                    let token: u32 = match fault_reply.token {
+                                        Some(token_val) => token_val,
+                                        None => 0,
+                                    };
+                                    let notpresent_injected = (fault_reply.flags & 1) != 0;
+                                    let vcpu_idx: u64 = fault_reply.vcpu.into();
 
-                        /* println!("about to madvise read all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
-                        let start_time = Instant::now();
+                                    // use this as a proxy for async pf for now
+                                    if !notpresent_injected {
+                                        let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
+                                        self.writer.write_all(&bytes).unwrap();
+                                        return;
+                                    }
 
-                        use libc::MADV_POPULATE_READ;
-                        let result = unsafe {
-                            madvise(
-                                self.mem_src.offset(ret_gpa as isize) as *mut c_void,
-                                ret_len as usize,
-                                MADV_POPULATE_READ
-                            )
-                        };
-                        if result != 0 {
-                            panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
-                        }
-                        let elapsed_time = start_time.elapsed();
-                        println!("madvised in {:?}", elapsed_time); */
+                                    use crate::vstate::guest_memfd::{
+                                        kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                                        KVM_SET_MEMORY_ATTRIBUTES,
+                                    };
 
-                        /* println!("about to copy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
-                        let start_time = Instant::now();
+                                    let attributes = kvm_memory_attributes {
+                                        address: ret_gpa,
+                                        size: ret_len,
+                                        attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                                        ..Default::default()
+                                    };
 
-                        let copy = kvm_guest_memfd_copy {
-                            guest_memfd: self.guest_memfd.as_raw_fd() as _,
-                            from: unsafe {
-                                self.mem_src.offset(ret_gpa as isize) as *const c_void
-                            },
-                            offset: ret_gpa,
-                            len: ret_len,
-                        };
-                        unsafe {
-                            SyscallReturnCode(ioctl_with_ref(
-                                self.vm.fd(),
-                                KVM_GUEST_MEMFD_COPY(),
-                                &copy,
-                            ))
-                            .into_empty_result()
-                            .unwrap()
-                        };
+                                    unsafe {
+                                        SyscallReturnCode(ioctl_with_ref(
+                                            self.vm.fd(),
+                                            KVM_SET_MEMORY_ATTRIBUTES(),
+                                            &attributes,
+                                        ))
+                                        .into_empty_result()
+                                        .unwrap()
+                                    }
 
-                        let elapsed_time = start_time.elapsed();
-                        println!("copied in {:?}", elapsed_time); */
+                                    if ret_len != 4096 {
+                                        println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
+                                        let start_time = Instant::now();
+                                        let pre_fault = kvm_pre_fault_memory {
+                                            gpa: ret_gpa,
+                                            size: ret_len,
+                                            ..Default::default()
+                                        };
 
-                        use crate::vstate::guest_memfd::{
-                            kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                            KVM_SET_MEMORY_ATTRIBUTES,
-                        };
+                                        unsafe {
+                                            SyscallReturnCode(ioctl_with_ref(
+                                                &self.vcpu_fds[vcpu_idx as usize],
+                                                KVM_PRE_FAULT_MEMORY(),
+                                                &pre_fault,
+                                            ))
+                                            .into_empty_result()
+                                            .unwrap()
+                                        }
+                                        let elapsed_time = start_time.elapsed();
+                                        println!("prefaulted in {:?}", elapsed_time);
+                                    }
 
-                        let attributes = kvm_memory_attributes {
-                            address: ret_gpa,
-                            size: ret_len,
-                            attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                            ..Default::default()
-                        };
-
-                        unsafe {
-                            SyscallReturnCode(ioctl_with_ref(
-                                self.vm.fd(),
-                                KVM_SET_MEMORY_ATTRIBUTES(),
-                                &attributes,
-                            ))
-                            .into_empty_result()
-                            .unwrap()
-                        }
-
-                        if ret_len != 4096 {
-                            println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
-                            let start_time = Instant::now();
-                            let pre_fault = kvm_pre_fault_memory {
-                                gpa: ret_gpa,
-                                size: ret_len,
-                                ..Default::default()
-                            };
-
-                            unsafe {
-                                SyscallReturnCode(ioctl_with_ref(
-                                    &self.vcpu_fds[vcpu_idx as usize],
-                                    KVM_PRE_FAULT_MEMORY(),
-                                    &pre_fault,
-                                ))
-                                .into_empty_result()
-                                .unwrap()
+                                    let ready = kvm_async_pf_ready {
+                                        gpa,
+                                        token: token.try_into().unwrap(),
+                                        notpresent_injected: notpresent_injected.try_into().unwrap(),
+                                    };
+                                    unsafe {
+                                        SyscallReturnCode(ioctl_with_ref(
+                                            &self.vcpu_fds[vcpu_idx as usize],
+                                            KVM_ASYNC_PF_READY(),
+                                            &ready,
+                                        ))
+                                        .into_empty_result()
+                                        .unwrap()
+                                    }
+                                },
+                                Err(e) => {
+                                    panic!("Failed to parse FaultReply: {}", e);
+                                }
                             }
-                            let elapsed_time = start_time.elapsed();
-                            println!("prefaulted in {:?}", elapsed_time);
-                        }
-
-                        let ready = kvm_async_pf_ready {
-                            gpa,
-                            token: token.try_into().unwrap(),
-                            notpresent_injected: notpresent_injected.try_into().unwrap(),
-                        };
-                        unsafe {
-                            SyscallReturnCode(ioctl_with_ref(
-                                &self.vcpu_fds[vcpu_idx as usize],
-                                KVM_ASYNC_PF_READY(),
-                                &ready,
-                            ))
-                            .into_empty_result()
-                            .unwrap()
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
                         break;
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        break;
-                    }
-                    Err(e) => {
-                        // Error occurred while reading from the stream
-                        eprintln!("Error reading from stream: {}", e);
-                        break;
-                    }
+                    },
+                    Err(e) => panic!("{e}"),
                 }
             }
         } else {
@@ -1145,8 +1132,8 @@ impl MutEventSubscriber for Vmm {
         if let Err(err) = ops.add(Events::new(&self.reader, EventSet::IN)) {
             error!("Failed to register apf reader: {}", err);
         }
-        if let Err(err) = ops.add(Events::new(&self.apf_stream, EventSet::IN)) {
-            error!("Failed to register apf stream: {}", err);
+        if let Err(err) = ops.add(Events::new(&self.uds_stream, EventSet::IN)) {
+            error!("Failed to register uds stream: {}", err);
         }
     }
 }

@@ -174,7 +174,6 @@ fn create_vmm_and_vcpus(
     vcpu_count: u8,
     kvm_capabilities: Vec<KvmCapability>,
     uds: Option<UnixStream>,
-    apf_stream: Option<UnixStream>,
 ) -> Result<(Vmm, Vec<Vcpu>, Option<GuestMemoryMmap>), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -192,17 +191,23 @@ fn create_vmm_and_vcpus(
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
 
-    vm.uds = uds;
+    // vm.uds = uds;
 
     let vcpus_exit_evt = EventFd::new(libc::EFD_NONBLOCK)
         .map_err(VmmError::EventFd)
         .map_err(Internal)?;
 
-    let (reader_fd, writer_fd) = pipe2(libc::O_NONBLOCK).unwrap();
+    let (vmm_reader_fd, vcpu_writer_fd) = pipe2(libc::O_NONBLOCK).unwrap();
 
     // Convert the file descriptors to UnixStream instances
-    let reader = unsafe { File::from_raw_fd(reader_fd) };
-    let writer = unsafe { File::from_raw_fd(writer_fd) };
+    let vmm_reader = unsafe { File::from_raw_fd(vmm_reader_fd) };
+    let vcpu_writer = unsafe { File::from_raw_fd(vcpu_writer_fd) };
+
+    let (vcpu_reader_fd, vmm_writer_fd) = pipe2(0).unwrap();
+
+    // Convert the file descriptors to UnixStream instances
+    let vcpu_reader = unsafe { File::from_raw_fd(vcpu_reader_fd) };
+    let vmm_writer = unsafe { File::from_raw_fd(vmm_writer_fd) };
 
     let resource_allocator = ResourceAllocator::new()?;
 
@@ -218,7 +223,7 @@ fn create_vmm_and_vcpus(
     #[cfg(target_arch = "x86_64")]
     let (vcpus, pio_device_manager) = {
         setup_interrupt_controller(&mut vm)?;
-        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &writer).map_err(Internal)?;
+        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &vcpu_reader, &vcpu_writer).map_err(Internal)?;
 
         // Make stdout non blocking.
         set_stdout_nonblocking();
@@ -265,7 +270,8 @@ fn create_vmm_and_vcpus(
         vcpus_handles: Vec::new(),
         vcpu_fds: Vec::new(),
         vcpus_exit_evt,
-        reader,
+        reader: vmm_reader,
+        writer: vmm_writer,
         mem_src: ptr::null_mut(),
         resource_allocator,
         mmio_device_manager,
@@ -275,7 +281,7 @@ fn create_vmm_and_vcpus(
         acpi_device_manager,
         guest_memfd,
         eventfd: None,
-        apf_stream: apf_stream.unwrap(),
+        uds_stream: uds.unwrap(),
     };
 
     Ok((vmm, vcpus, Some(private_memory)))
@@ -314,7 +320,6 @@ pub fn build_microvm_for_boot(
         track_dirty_pages,
         vm_resources.vm_config.vcpu_count,
         cpu_template.kvm_capabilities.clone(),
-        None,
         None,
     )?;
 
@@ -510,6 +515,7 @@ pub fn build_microvm_from_snapshot(
     // FIXME: Hardcoding the UDS socket path as it's awkward to bring it here.
     let uds_sock = "/mnt/host/uffd.sock";
     let socket = UnixStream::connect(uds_sock).unwrap();
+    socket.set_nonblocking(true).expect("Failed to set non-blocking mode");
     use utils::sock_ctrl_msg::ScmSocket;
 
     // FIXME: adding this delay because otherwise
@@ -518,17 +524,6 @@ pub fn build_microvm_from_snapshot(
     use std::thread;
     use std::time::Duration;
     thread::sleep(Duration::from_millis(3 * 1000));
-
-    // FIXME: Hardcoding the APF socket path as it's awkward to bring it here.
-    let apf_sock = "/mnt/host/apf.sock";
-    let apf_stream = UnixStream::connect(apf_sock)
-        .map(|stream| {
-            stream
-                .set_nonblocking(true)
-                .expect("Failed to set non-blocking mode");
-            stream
-        })
-        .unwrap();
 
     let socket_copy = unsafe { UnixStream::from_raw_fd(socket.as_raw_fd()) };
 
@@ -557,7 +552,6 @@ pub fn build_microvm_from_snapshot(
         vm_resources.vm_config.vcpu_count,
         microvm_state.vm_state.kvm_cap_modifiers.clone(),
         Some(socket_copy),
-        Some(apf_stream),
     )?;
 
     // This is to keep UFFD
@@ -592,6 +586,7 @@ pub fn build_microvm_from_snapshot(
             size: mem_region.size(),
             offset: state_region.offset,
             page_size_kib: 4096,
+            is_guest_memfd: true,
         });
     }
     let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();
@@ -614,21 +609,20 @@ pub fn build_microvm_from_snapshot(
         .send_with_fds(
             &[backend_mappings_json.as_bytes()],
             &[
-                eventfd.as_raw_fd(),
-                guest_memfd.as_raw_fd(),
-                vmm.vm.fd().as_raw_fd(),
                 uffd_gmfd.as_raw_fd(),
+                uffd_gmfd.as_raw_fd(),
+                guest_memfd.as_raw_fd(),
             ],
         )
         .unwrap();
 
     // FIXME: don't need this anymore
     // Receive memory source file
-    let mut buf = vec![0; 64];
+    /* let mut buf = vec![0; 64];
     let (size, mem_src_file_opt) = socket.recv_with_fd(& mut buf).unwrap();
     if size == 0 {
         panic!("recv mem src file failed")
-    }
+    } */
     /* let mem_src_file = mem_src_file_opt.unwrap();
     let file_meta = mem_src_file
         .metadata()
@@ -922,13 +916,15 @@ fn create_vcpus(
     vm: &Vm,
     vcpu_count: u8,
     exit_evt: &EventFd,
+    reader: &File,
     writer: &File,
 ) -> Result<Vec<Vcpu>, VmmError> {
     let mut vcpus = Vec::with_capacity(vcpu_count as usize);
     for cpu_idx in 0..vcpu_count {
         let exit_evt = exit_evt.try_clone().map_err(VmmError::EventFd)?;
+        let reader = reader.try_clone().map_err(VmmError::EventFd)?;
         let writer = writer.try_clone().map_err(VmmError::EventFd)?;
-        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt, writer).map_err(VmmError::VcpuCreate)?;
+        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt, reader, writer).map_err(VmmError::VcpuCreate)?;
         vcpus.push(vcpu);
     }
     Ok(vcpus)

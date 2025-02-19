@@ -7,22 +7,24 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::ptr;
 
-use kvm_ioctls::VmFd;
 use libc::{ftruncate, iovec, memfd_create};
 use serde::{Deserialize, Serialize};
 use userfaultfd::{Error, Uffd};
-use utils::eventfd::EventFd;
 use utils::sock_ctrl_msg::ScmSocket;
 use vmm::arch::PAGE_SIZE;
+use vmm::persist::{FaultReply, FaultRequest, GuestRegionUffdMapping, UffdMsgFromFirecracker, UffdMsgToFirecracker};
 use vmm::vstate::guest_memfd::read_fault;
 
 use libc;
 use std::os::unix::io::RawFd;
+
+use serde_json::Deserializer;
+
 
 #[repr(C)]
 struct uffdio_continue {
@@ -70,7 +72,7 @@ pub fn uffd_continue(uffd: RawFd, fault_addr: u64, len: u64) -> std::io::Result<
 ///
 /// E.g. Guest memory contents for a region of `size` bytes can be found in the backend
 /// at `offset` bytes from the beginning, and should be copied/populated into `base_host_address`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/* #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GuestRegionUffdMapping {
     /// Base host virtual address where the guest memory contents for this region
     /// should be copied/populated.
@@ -81,7 +83,9 @@ pub struct GuestRegionUffdMapping {
     pub offset: u64,
     /// The configured page size for this memory region.
     pub page_size_kib: usize,
-}
+    /// is guest memfd
+    pub is_guest_memfd: bool,
+} */
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemPageState {
@@ -102,16 +106,11 @@ pub struct UffdHandler {
     pub mem_regions: Vec<MemRegion>,
     pub page_size: usize,
     pub backing_buffer: *const u8,
-    // For receiving fault notifications
-    eventfd: EventFd,
     // For mmapping guest memory
     pub guest_memfd: File,
-    // For clearing UFFD memattr
-    pub kvm_fd: VmFd,
     pub uffd: Uffd,
     // For copying pages in
     pub guest_memfd_addr: *mut u8,
-    pub memfd_addr: *mut u8,
 }
 
 pub enum FromUnixStreamResult {
@@ -120,98 +119,57 @@ pub enum FromUnixStreamResult {
 }
 
 impl UffdHandler {
-    pub fn from_unix_stream(
-        stream: &UnixStream,
+    pub fn from_mappings(
+        mappings: &Vec<GuestRegionUffdMapping>,
+        fds: &[i32],
         backing_buffer: *const u8,
         size: usize,
-        memfd_addr: *mut u8,
     ) -> FromUnixStreamResult {
-        let mut message_buf = vec![0u8; 1024];
-        use core::ffi::c_void;
-        let mut iovecs = [iovec {
-            iov_base: message_buf.as_mut_ptr() as *mut c_void,
-            iov_len: message_buf.len(),
-        }];
-        let mut fds = [0, 0, 0, 0];
-        let (read_count, _fd_count) =
-            unsafe { stream.recv_with_fds(&mut iovecs[..], &mut fds).unwrap() };
-        message_buf.resize(read_count, 0);
+        let memsize: usize = mappings.iter().map(|r| r.size).sum();
+        // Page size is the same for all memory regions, so just grab the first one
+        let page_size = mappings.first().unwrap().page_size_kib;
 
-        // FIXME: if we didn't receive any fds, it's an implicit indication that it's a pagefault
-        // notification.
-        if fds[0] != 0 {
-            let body = String::from_utf8(message_buf).unwrap();
+        // Make sure memory size matches backing data size.
+        assert_eq!(memsize, size);
+        assert!(page_size.is_power_of_two());
 
-            let mappings = serde_json::from_str::<Vec<GuestRegionUffdMapping>>(&body)
-                .expect("Cannot deserialize memory mappings.");
-            let memsize: usize = mappings.iter().map(|r| r.size).sum();
-            // Page size is the same for all memory regions, so just grab the first one
-            let page_size = mappings.first().unwrap().page_size_kib;
+        // guest_memfd uffd
+        let uffd = unsafe { Uffd::from_raw_fd(fds[1]) };
+        let guest_memfd = unsafe { File::from_raw_fd(fds[2].into_raw_fd()) };
 
-            // Make sure memory size matches backing data size.
-            assert_eq!(memsize, size);
-            assert!(page_size.is_power_of_two());
+        let mem_regions = create_mem_regions(&mappings, page_size);
 
-            // This one is a dummy, not used.
-            let uffd = unsafe { Uffd::from_raw_fd(fds[3]) };
+        let sizes: Vec<usize> = mem_regions
+            .iter()
+            .map(|region| region.mapping.size as usize)
+            .collect();
 
-            let eventfd = unsafe { EventFd::from_raw_fd(fds[0].into_raw_fd()) };
-            let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
-
-            // We've no way to construct a real VmFd from scratch as it's in kvm-ioctls repo.
-            pub struct VmFdMy {
-                vm: File,
-                run_size: usize,
-            }
-
-            // We don't care about run_size as we don't use it here.
-            let vmfd_my = VmFdMy {
-                vm: unsafe { File::from_raw_fd(fds[2].into_raw_fd()) },
-                run_size: 0,
-            };
-            let kvm_fd = unsafe { std::mem::transmute::<VmFdMy, VmFd>(vmfd_my) };
-
-            let mem_regions = create_mem_regions(&mappings, page_size);
-
-            let sizes: Vec<usize> = mem_regions
-                .iter()
-                .map(|region| region.mapping.size as usize)
-                .collect();
-
-            // # Safety:
-            // File size and fd are valid
-            let ret = unsafe {
-                libc::mmap(
-                    ptr::null_mut(),
-                    sizes[0],
-                    libc::PROT_WRITE,
-                    libc::MAP_SHARED,
-                    guest_memfd.as_raw_fd(),
-                    0,
-                )
-            };
-            if ret == libc::MAP_FAILED {
-                panic!("mmap on guest_memfd failed");
-            }
-
-            println!("guest_memfd is mmapped.");
-
-            FromUnixStreamResult::NewConn(Self {
-                mem_regions,
-                page_size,
-                backing_buffer,
-                eventfd,
-                guest_memfd,
-                kvm_fd,
-                uffd,
-                guest_memfd_addr: ret.cast(),
-                memfd_addr,
-            })
-        } else {
-            let gpa: u64 = u64::from_be_bytes(message_buf.as_slice().try_into().unwrap());
-            let gfn = gpa / 4096;
-            FromUnixStreamResult::Gfn(gfn)
+        // # Safety:
+        // File size and fd are valid
+        let ret = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                sizes[0],
+                libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                guest_memfd.as_raw_fd(),
+                0,
+            )
+        };
+        if ret == libc::MAP_FAILED {
+            panic!("mmap on guest_memfd failed");
         }
+
+        println!("guest_memfd is mmapped.");
+
+        FromUnixStreamResult::NewConn(Self {
+            mem_regions,
+            page_size,
+            backing_buffer,
+            guest_memfd,
+            uffd,
+            guest_memfd_addr: ret.cast(),
+        })
     }
 
     pub fn read_event_uffd(&mut self) -> Result<Option<u64>, Error> {
@@ -222,12 +180,6 @@ impl UffdHandler {
             }
             _ => panic!("Unexpected event on uffd"),
         }
-    }
-
-    pub fn read_event_eventfd(&mut self) -> Result<Option<u64>, Error> {
-        let _res = self.eventfd.read().unwrap();
-        let gfn = read_fault(&self.kvm_fd);
-        Ok(Some(gfn))
     }
 
     pub fn update_mem_state_mappings(&mut self, start: u64, end: u64, state: MemPageState) {
@@ -308,16 +260,14 @@ impl UffdHandler {
 #[derive(Debug)]
 pub struct Runtime {
     stream: UnixStream,
-    apf_stream: UnixStream,
     backing_file: File,
     backing_memory: *mut u8,
     backing_memory_size: usize,
-    eventfds: HashMap<i32, UffdHandler>,
-    memfd_addr: *mut u8,
+    handler: Option<UffdHandler>,
 }
 
 impl Runtime {
-    pub fn new(stream: UnixStream, backing_file: File, apf_stream: UnixStream) -> Self {
+    pub fn new(stream: UnixStream, backing_file: File) -> Self {
         let file_meta = backing_file
             .metadata()
             .expect("can not get backing file metadata");
@@ -338,47 +288,12 @@ impl Runtime {
             panic!("mmap on backing file failed");
         }
 
-        let name = CString::new("memfd").unwrap();
-        let memfd = unsafe { memfd_create(name.as_ptr(), 0) };
-        if memfd < 0 {
-            panic!("Failed to create memfd: {}", std::io::Error::last_os_error());
-        }
-        let retmfd = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                backing_memory_size,
-                libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                memfd.as_raw_fd(),
-                0,
-            )
-        };
-        if retmfd == libc::MAP_FAILED {
-            panic!("mmap on memfd file failed");
-        }
-
-        let new_size = backing_memory_size;
-        let result = unsafe { ftruncate(memfd.as_raw_fd(), new_size.try_into().unwrap()) };
-        if result != 0 {
-            panic!("Failed to resize memfd: {}", std::io::Error::last_os_error());
-        }
-
-        // Send our own fd straight away
-        let buf = b"mem src file";
-        // let ret = stream.send_with_fd(&buf[..], backing_file.as_raw_fd()).unwrap();
-        let retsend = stream.send_with_fd(&buf[..], memfd.as_raw_fd()).unwrap();
-        if retsend == 0 {
-            panic!("send mem src file failed")
-        }
-
         Self {
             stream,
-            apf_stream,
             backing_file,
             backing_memory: ret.cast(),
             backing_memory_size,
-            eventfds: HashMap::default(),
-            memfd_addr: retmfd.cast(),
+            handler: None,
         }
     }
 
@@ -389,8 +304,7 @@ impl Runtime {
     /// uffd object passed in.
     pub fn run(
         &mut self,
-        pf_uffd_dispatch: impl Fn(&mut UffdHandler),
-        pf_event_dispatch: impl Fn(&mut UffdHandler),
+        pf_uffd_dispatch: impl Fn(&mut UffdHandler, &mut u64, &mut u64),
         pf_exit_dispatch: impl Fn(&mut UffdHandler, u64, &mut u64, &mut u64),
     ) {
         let mut pollfds = vec![];
@@ -398,13 +312,6 @@ impl Runtime {
         // Poll the stream for incoming uffds
         pollfds.push(libc::pollfd {
             fd: self.stream.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        });
-
-        // Poll the stream for incoming APF connections
-        pollfds.push(libc::pollfd {
-            fd: self.apf_stream.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         });
@@ -434,97 +341,122 @@ impl Runtime {
                 if pollfds[i].revents & libc::POLLIN != 0 {
                     nready -= 1;
                     if pollfds[i].fd == self.stream.as_raw_fd() {
-                        // Handle new uffd from stream
-                        let result = UffdHandler::from_unix_stream(
-                            &self.stream,
-                            self.backing_memory,
-                            self.backing_memory_size,
-                            self.memfd_addr,
-                        );
 
-                        match result {
-                            FromUnixStreamResult::NewConn(handler) => {
-                                pollfds.push(libc::pollfd {
-                                    fd: handler.eventfd.as_raw_fd(),
-                                    events: libc::POLLIN,
-                                    revents: 0,
-                                });
+                        let mut buffer = [0u8; 1024]; // or whatever size is appropriate
+                        let mut fds = [0; 32]; // Adjust array size based on maximum expected FDs
+                        let mut accumulated_data = String::new();
 
-                                pollfds.push(libc::pollfd {
-                                    fd: handler.uffd.as_raw_fd(),
-                                    events: libc::POLLIN,
-                                    revents: 0,
-                                });
-
-                                self.eventfds.insert(handler.eventfd.as_raw_fd(), handler);
-
-                                // If connection is closed, we can skip the socket from being
-                                // polled.
-                                if pollfds[i].revents & (libc::POLLRDHUP | libc::POLLHUP) != 0 {
-                                    skip_stream = 1;
-                                }
-                            }
-                            FromUnixStreamResult::Gfn(gfn) => {
-                                let (_, handler) = self.eventfds.iter_mut().next().unwrap();
-                                let mut ret_gpa = 0u64;
-                                let mut ret_len: u64 = 0u64;
-                                pf_exit_dispatch(handler, gfn, &mut ret_gpa, &mut ret_len);
-
-                                // Replying 1 as an ack. Can be anything.
-                                let bytes = [(1 as u64).to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
-                                let _ret = self.stream.write_all(&bytes);
-                            }
-                        }
-                    } else if pollfds[i].fd == self.apf_stream.as_raw_fd() {
-                        let (_, handler) = self.eventfds.iter_mut().next().unwrap();
-                        let req: &mut [u8; 8] = &mut [0; 8];
+                        let mut iov = [libc::iovec {
+                            iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
+                            iov_len: buffer.len(),
+                        }];
 
                         loop {
-                            match self.apf_stream.read_exact(req) {
-                                Ok(()) => {
-                                    let evt: u64 =
-                                        u64::from_be_bytes(req.as_slice().try_into().unwrap());
-                                    let gpa = evt & 0xffff_ffff;
+                            let res = unsafe { self.stream.recv_with_fds(&mut iov, &mut fds) };
+                            match res {
+                                Ok((n, num_fds)) => {
+                                    if n == 0 { break; } // EOF
 
-                                    /* let token = (evt >> 32) & 0xffff_f7ff;
-                                    let notpresent_injected = evt & (1 << (32 + 11)) != 0;
-                                    let vcpu_idx = evt & 0x7ff;
+                                    accumulated_data.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                                    let mut stream = serde_json::Deserializer::from_str(&accumulated_data).into_iter::<UffdMsgFromFirecracker>();
 
-                                    println!(
-                                        "APF: req: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
-                                        gpa, token, vcpu_idx, notpresent_injected
-                                    ); */
+                                    let mut last_valid_pos = 0;
+                                    while let Some(result) = stream.next() {
+                                        match result {
+                                            Ok(msg) => {
+                                                match msg {
+                                                    UffdMsgFromFirecracker::FaultReq(fault_request) => {
+                                                        // println!("Received FaultRequest: {:?}", fault_request);
+                                                        let gpa = fault_request.offset;
+                                                        let gfn = gpa / 4096;
 
-                                    let gfn = gpa / 4096;
+                                                        let mut ret_gpa = 0u64;
+                                                        let mut ret_len: u64 = 0u64;
+                                                        pf_exit_dispatch(&mut self.handler.as_mut().unwrap(), gfn, &mut ret_gpa, &mut ret_len);
 
-                                    let mut ret_gpa = 0u64;
-                                    let mut ret_len: u64 = 0u64;
-                                    pf_exit_dispatch(handler, gfn, &mut ret_gpa, &mut ret_len);
+                                                        let fault_reply = FaultReply {
+                                                            vcpu: fault_request.vcpu,
+                                                            offset: ret_gpa,
+                                                            len: ret_len,
+                                                            flags: fault_request.flags,
+                                                            token: fault_request.token,
+                                                        };
 
-                                    // Replying gpa as an ack.
-                                    let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
-                                    self.apf_stream.write_all(&bytes).unwrap();
-                                }
-                                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                                        let reply = UffdMsgToFirecracker::FaultRep(fault_reply);
+                                                        let reply_json = serde_json::to_string(&reply).unwrap();
+                                                        self.stream.write(reply_json.as_bytes()).unwrap();
+                                                    },
+                                                    UffdMsgFromFirecracker::Mappings(mappings) => {
+                                                        // println!("Received GuestRegionUffdMappings: {:?}", mappings);
+                                                        if num_fds > 0 {
+                                                            // Handle the mappings and their associated FDs
+                                                            // The FDs will be in fds[0..num_fds]
+                                                            let result = UffdHandler::from_mappings(
+                                                                &mappings,
+                                                                &fds[0..num_fds],
+                                                                self.backing_memory,
+                                                                self.backing_memory_size
+                                                            );
+
+                                                            match result {
+                                                                FromUnixStreamResult::NewConn(handler) => {
+                                                                    pollfds.push(libc::pollfd {
+                                                                        fd: handler.uffd.as_raw_fd(),
+                                                                        events: libc::POLLIN,
+                                                                        revents: 0,
+                                                                    });
+
+                                                                    self.handler = Some(handler);
+
+                                                                    // If connection is closed, we can skip the socket from being
+                                                                    // polled.
+                                                                    if pollfds[i].revents & (libc::POLLRDHUP | libc::POLLHUP) != 0 {
+                                                                        skip_stream = 1;
+                                                                    }
+                                                                },
+                                                                FromUnixStreamResult::Gfn(_) => todo!()
+                                                            }
+                                                        } else {
+                                                            panic!("Received mappings message without associated FDs");
+                                                        }
+                                                    }
+                                                }
+                                                last_valid_pos = stream.byte_offset();
+                                            },
+                                            Err(e) => {
+                                                panic!("Failed to parse message: {}", e);
+                                            }
+                                        }
+                                    }
+                                    // Keep only the unprocessed part
+                                    accumulated_data = accumulated_data[last_valid_pos..].to_string();
+                                },
+                                Err(e) if e.errno() == 11 => {
                                     break;
-                                }
-                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                    break;
-                                }
-                                Err(e) => {
-                                    // Error occurred while reading from the stream
-                                    eprintln!("Error reading from stream: {}", e);
-                                    break;
-                                }
+                                },
+                                Err(e) => panic!("{e}"),
                             }
                         }
-                    } else if self.eventfds.contains_key(&pollfds[i].fd) {
-                        // Handle eventfd event
-                        pf_event_dispatch(self.eventfds.get_mut(&pollfds[i].fd).unwrap());
+
                     } else {
                         // Handle one of uffd page faults
                         // FIXME: only supports one handler
-                        pf_uffd_dispatch(self.eventfds.iter_mut().next().unwrap().1);
+
+                        let mut ret_gpa = 0u64;
+                        let mut ret_len: u64 = 0u64;
+                        pf_uffd_dispatch(&mut self.handler.as_mut().unwrap(), &mut ret_gpa, &mut ret_len);
+
+                        let fault_reply = FaultReply {
+                            vcpu: 0,
+                            offset: ret_gpa,
+                            len: ret_len,
+                            flags: 0,
+                            token: None,
+                        };
+
+                        let reply = UffdMsgToFirecracker::FaultRep(fault_reply);
+                        let reply_json = serde_json::to_string(&reply).unwrap();
+                        self.stream.write(reply_json.as_bytes()).unwrap();
                     }
                 }
             }

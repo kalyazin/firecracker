@@ -23,7 +23,6 @@ fn main() {
     let mut args = std::env::args();
     let uffd_sock_path = args.nth(1).expect("No socket path given");
     let mem_file_path = args.next().expect("No memory file given");
-    let apf_sock_path = args.next().expect("No apf socket path given");
 
     let file = File::open(mem_file_path).expect("Cannot open memfile");
 
@@ -31,18 +30,13 @@ fn main() {
     let listener = UnixListener::bind(uffd_sock_path).expect("Cannot bind to socket path");
     let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
-    let apf_listener = UnixListener::bind(apf_sock_path).expect("Cannot bind to apf socket path");
-    let (apf_stream, _) = apf_listener
-        .accept()
-        .expect("Cannot listen on UDS APF socket");
-
-    apf_stream
+    stream
         .set_nonblocking(true)
         .expect("Failed to set non-blocking mode");
 
-    let mut runtime = Runtime::new(stream, file, apf_stream);
+    let mut runtime = Runtime::new(stream, file);
     runtime.run(
-        |uffd_handler: &mut UffdHandler| {
+        |uffd_handler: &mut UffdHandler, ret_gpa: &mut u64, ret_len: &mut u64| {
             // Read an event from the userfaultfd.
             let event = uffd_handler
                 .read_event_uffd()
@@ -54,6 +48,9 @@ fn main() {
 
             let gpa = useraddr - region_base;
             let gfn = gpa / 4096;
+
+            *ret_gpa = 4096 * gfn;
+            *ret_len = 4096;
 
             let src = uffd_handler.backing_buffer as u64 + gpa;
             // println!("writing (uffd) {gfn}...");
@@ -70,26 +67,6 @@ fn main() {
                 }
                 //println!("Wrote {} bytes", bytes_written);
             }
-            // println!("wrote.");
-
-            // println!("about to clear uffd memattr...");
-            let attributes = kvm_memory_attributes {
-                address: 4096 * gfn,
-                size: 4096,
-                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                ..Default::default()
-            };
-
-            unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_SET_MEMORY_ATTRIBUTES(),
-                    &attributes,
-                ))
-                .into_empty_result()
-                .unwrap()
-            }
-            // println!("cleared.");
 
             let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
             // println!("copying (uffd) {gfn} to {dst:?}...");
@@ -100,55 +77,6 @@ fn main() {
             };
             ret.unwrap();
             // println!("continued.");
-        },
-        |uffd_handler: &mut UffdHandler| {
-            // Read an event from the userfaultfd.
-            let event = uffd_handler
-                .read_event_eventfd()
-                .expect("Failed to read uffd_msg")
-                .expect("uffd_msg not ready");
-
-            let gfn = event;
-
-            // println!("copying one {}...", gfn);
-            use std::os::raw::c_void;
-            let copy = kvm_guest_memfd_copy {
-                guest_memfd: uffd_handler.guest_memfd.as_raw_fd() as _,
-                from: unsafe {
-                    uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void
-                },
-                offset: 4096 * gfn,
-                len: 4096,
-            };
-            unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_GUEST_MEMFD_COPY(),
-                    &copy,
-                ))
-                .into_empty_result()
-                .unwrap()
-            }
-            // println!("copied");
-
-            // println!("about to clear uffd memattr...");
-            let attributes = kvm_memory_attributes {
-                address: 4096 * gfn,
-                size: 4096,
-                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                ..Default::default()
-            };
-
-            unsafe {
-                SyscallReturnCode(ioctl_with_ref(
-                    &uffd_handler.kvm_fd,
-                    KVM_SET_MEMORY_ATTRIBUTES(),
-                    &attributes,
-                ))
-                .into_empty_result()
-                .unwrap()
-            }
-            // println!("cleared.");
         },
         |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             *ret_gpa = 4096 * gfn;
