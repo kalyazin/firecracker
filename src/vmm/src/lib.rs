@@ -351,7 +351,7 @@ pub struct Vmm {
     /// eventfd
     pub eventfd: Option<i32>,
     /// UFFD socket
-    uds_stream: UnixStream,
+    uds_stream: Option<UnixStream>,
 }
 
 impl Vmm {
@@ -1000,7 +1000,7 @@ impl MutEventSubscriber for Vmm {
                             }
                         };
                         let fault_request_json = serde_json::to_string(&fault_request).unwrap();
-                        self.uds_stream.write(fault_request_json.as_bytes()).unwrap();
+                        self.uds_stream.as_ref().unwrap().write(fault_request_json.as_bytes()).unwrap();
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                         break;
@@ -1015,11 +1015,11 @@ impl MutEventSubscriber for Vmm {
                     }
                 }
             }
-        } else if source == self.uds_stream.as_raw_fd() && event_set == EventSet::IN {
+        } else if source == self.uds_stream.as_ref().unwrap().as_raw_fd() && event_set == EventSet::IN {
             let mut buffer = [0u8; 1024]; // or whatever size is appropriate
 
             loop {
-                match self.uds_stream.read(&mut buffer) {
+                match self.uds_stream.as_ref().unwrap().read(&mut buffer) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
                         let json_str = String::from_utf8_lossy(&buffer[..n]);
@@ -1132,8 +1132,10 @@ impl MutEventSubscriber for Vmm {
         if let Err(err) = ops.add(Events::new(&self.reader, EventSet::IN)) {
             error!("Failed to register apf reader: {}", err);
         }
-        if let Err(err) = ops.add(Events::new(&self.uds_stream, EventSet::IN)) {
-            error!("Failed to register uds stream: {}", err);
+        if let Some(uds) = &self.uds_stream {
+            if let Err(err) = ops.add(Events::new(uds, EventSet::IN)) {
+                error!("Failed to register uds stream: {}", err);
+            }
         }
     }
 }

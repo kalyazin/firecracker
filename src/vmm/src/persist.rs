@@ -305,11 +305,10 @@ fn snapshot_memory_to_file(
                 .map_err(Memory)
         }
         SnapshotType::Full => {
-            // FIXME: hardcoded memory size.
-            let file_length = 128 * 1024 * 1024;
             let mem = vmm.guest_memory();
+            let file_len = mem.describe().regions[0].size;
             let _ = mem
-                .get_slice(vm_memory::GuestAddress(0), file_length as usize)
+                .get_slice(vm_memory::GuestAddress(0), file_len as usize)
                 .and_then(|slice| {
                     let mut vec = vec![0u8; slice.len()];
                     slice.copy_to(vec.as_mut_slice());

@@ -281,7 +281,7 @@ fn create_vmm_and_vcpus(
         acpi_device_manager,
         guest_memfd,
         eventfd: None,
-        uds_stream: uds.unwrap(),
+        uds_stream: uds,
     };
 
     Ok((vmm, vcpus, Some(private_memory)))
@@ -378,7 +378,7 @@ pub fn build_microvm_for_boot(
         boot_cmdline,
     )?;
 
-    vmm.set_guest_memory_private()?;
+    vmm.set_guest_memory_private(true)?;
 
     // Move vcpus to their own threads and start their state machine in the 'Paused' state.
     vmm.start_vcpus(
@@ -648,7 +648,7 @@ pub fn build_microvm_from_snapshot(
     // We don't want to drop it as we'll use it for fault notifications caused VM exits.
     std::mem::forget(socket);
 
-    vmm.set_guest_memory_private()?;
+    vmm.set_guest_memory_private(false)?;
 
     #[cfg(target_arch = "x86_64")]
     {
