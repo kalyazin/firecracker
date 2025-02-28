@@ -609,7 +609,7 @@ pub fn build_microvm_from_snapshot(
         .send_with_fds(
             &[backend_mappings_json.as_bytes()],
             &[
-                uffd_gmfd.as_raw_fd(),
+                1, // FIXME: dummy for now: stdout to keep it quiet
                 uffd_gmfd.as_raw_fd(),
                 guest_memfd.as_raw_fd(),
             ],
