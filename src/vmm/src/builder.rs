@@ -599,9 +599,47 @@ pub fn build_microvm_from_snapshot(
         .create()
         .unwrap();
 
+    use libc::{c_void, ioctl};
+
+    const UFFDIO_REGISTER_MODE_MINOR: u64 = 1 << 2;
+    const UFFDIO_REGISTER: u64 = 0xc020aa00;
+
+    #[repr(C)]
+    struct UffdRegister {
+        range: UffdRange,
+        mode: u64,
+        ioctls: u64,
+    }
+
+    #[repr(C)]
+    struct UffdRange {
+        start: u64,
+        len: u64,
+    }
+
     for mem_region in private_memory.unwrap().iter() {
-        uffd_gmfd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
-            .unwrap();
+        /* uffd_gmfd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
+            .unwrap(); */
+        let uffd_register = UffdRegister {
+            range: UffdRange {
+                start: mem_region.as_ptr() as u64,
+                len: mem_region.size() as u64,
+            },
+            mode: UFFDIO_REGISTER_MODE_MINOR,
+            ioctls: 0,
+        };
+    
+        let result = unsafe {
+            ioctl(
+                uffd_gmfd.as_raw_fd(),
+                UFFDIO_REGISTER as _,
+                &uffd_register as *const _ as *const c_void
+            )
+        };
+    
+        if result == -1 {
+            panic!("{}", io::Error::last_os_error());
+        }
     }
 
     // Send all FDs to the UFFD handler.

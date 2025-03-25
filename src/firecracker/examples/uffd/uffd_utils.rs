@@ -21,6 +21,7 @@ use vmm::persist::{FaultReply, FaultRequest, GuestRegionUffdMapping, UffdMsgFrom
 use vmm::vstate::guest_memfd::read_fault;
 
 use libc;
+use bitvec::prelude::*;
 use std::os::unix::io::RawFd;
 
 use serde_json::Deserializer;
@@ -111,6 +112,7 @@ pub struct UffdHandler {
     pub uffd: Uffd,
     // For copying pages in
     pub guest_memfd_addr: *mut u8,
+    pub bitmap: BitVec,
 }
 
 pub enum FromUnixStreamResult {
@@ -169,6 +171,7 @@ impl UffdHandler {
             guest_memfd,
             uffd,
             guest_memfd_addr: ret.cast(),
+            bitmap: BitVec::repeat(false, 786432),
         })
     }
 
@@ -366,7 +369,7 @@ impl Runtime {
                                             Ok(msg) => {
                                                 match msg {
                                                     UffdMsgFromFirecracker::FaultReq(fault_request) => {
-                                                        // println!("Received FaultRequest: {:?}", fault_request);
+                                                        println!("Received FaultRequest: {:?}", fault_request);
                                                         let gpa = fault_request.offset;
                                                         let gfn = gpa / 4096;
 

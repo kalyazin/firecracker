@@ -57,14 +57,36 @@ fn main() {
                 .collect();
             let mem_size = sizes[0];
 
+            /* *ret_gpa = 4096 * gfn;
+            *ret_len = 4096; */
+
             *ret_gpa = 0;
-            *ret_len = mem_size as u64;
+            *ret_len = mem_size as _;
 
             let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
+            let dst_cont = region_base as u64 + *ret_gpa;
+            let dst = uffd_handler.guest_memfd_addr as u64 + *ret_gpa;
 
-            println!("about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            /* println!("uffd: about to madvise all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
             let start_time = Instant::now();
             unsafe {
+                // Call madvise with MADV_POPULATE_WRITE
+                let result = libc::madvise(
+                    dst as *mut libc::c_void,
+                    *ret_len as libc::size_t,
+                    libc::MADV_POPULATE_WRITE
+                );
+                
+                if result != 0 {
+                    panic!("Failed to call madvise: {}", std::io::Error::last_os_error());
+                }
+            }
+            let elapsed_time = start_time.elapsed();
+            println!("madvised in {:?}", elapsed_time); */
+
+            println!("uffd: about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            let start_time = Instant::now();
+            /* unsafe {
                 let bytes_written = pwrite64(
                     uffd_handler.guest_memfd.as_raw_fd(),
                     src as _,
@@ -89,14 +111,30 @@ fn main() {
                     panic!("Failed to call write: {}", std::io::Error::last_os_error());
                 }
                 println!("Wrote {} bytes", bytes_written);
+            } */
+            /* unsafe {
+                let bytes_written = pwrite64(
+                    uffd_handler.guest_memfd.as_raw_fd(),
+                    src as _,
+                    4096,
+                    (gfn * 4096).try_into().unwrap(),
+                );
+
+                if bytes_written == -1 {
+                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                }
+                //println!("Wrote {} bytes", bytes_written);
+            } */
+            unsafe {
+                std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
             }
             let elapsed_time = start_time.elapsed();
             println!("copied in {:?}", elapsed_time);
 
-            let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
+            // let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
             // println!("continuing (uffd) {gfn} to {dst:?}...");
             let ret = unsafe {
-                uffd_continue(uffd_handler.uffd.as_raw_fd(), dst as _, 4096)
+                uffd_continue(uffd_handler.uffd.as_raw_fd(), dst_cont as _, *ret_len)
             };
             ret.unwrap();
             // println!("continued.");
@@ -112,11 +150,15 @@ fn main() {
             *ret_gpa = 0;
             *ret_len = mem_size as u64;
 
-            // println!("gfn (stage-2) {gfn}");
+            let region_base = uffd_handler.mem_regions[0].mapping.base_host_virt_addr;
+
+            println!("gfn (stage-2) {gfn}");
 
             let src = uffd_handler.backing_buffer as u64 + *ret_gpa;
+            let dst_cont = region_base as u64 + *ret_gpa;
+            let dst = uffd_handler.guest_memfd_addr as u64 + *ret_gpa;
 
-            println!("about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
+            println!("exit: about to memcpy all pages in gpa 0x{ret_gpa:x} len {ret_len}...");
             let start_time = Instant::now();
             unsafe {
                 let bytes_written = pwrite64(
@@ -144,10 +186,19 @@ fn main() {
                 }
                 println!("Wrote {} bytes", bytes_written);
             }
+            /* unsafe {
+                std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
+            } */
             let elapsed_time = start_time.elapsed();
             println!("copied in {:?}", elapsed_time);
 
             // Can UFFDIO_CONTINUE, but need to exclude already processed to avoid EEXIST
+            // println!("continuing (uffd) {gfn} to {dst:?}...");
+            /* let ret = unsafe {
+                uffd_continue(uffd_handler.uffd.as_raw_fd(), dst_cont as _, *ret_len)
+            };
+            ret.unwrap(); */
+            // println!("continued.");
         },
     );
 }
