@@ -226,13 +226,7 @@ impl Vmm {
             let attributes = kvm_memory_attributes {
                 address: region.start_addr().raw_value(),
                 size: region.len(),
-                // FIXME: uncomment if want to take a snapshot.
-                // attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                attributes: if boot {
-                    KVM_MEMORY_ATTRIBUTE_PRIVATE
-                } else {
-                    KVM_MEMORY_ATTRIBUTE_PRIVATE | KVM_MEMORY_ATTRIBUTE_USERFAULT
-                },
+                attributes: 0, // KVM_MEMORY_ATTRIBUTE_PRIVATE,
                 ..Default::default()
             };
 
