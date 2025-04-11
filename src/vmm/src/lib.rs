@@ -1049,28 +1049,6 @@ impl MutEventSubscriber for Vmm {
                                         return;
                                     }
 
-                                    use crate::vstate::guest_memfd::{
-                                        kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                                        KVM_SET_MEMORY_ATTRIBUTES,
-                                    };
-
-                                    let attributes = kvm_memory_attributes {
-                                        address: ret_gpa,
-                                        size: ret_len,
-                                        attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                                        ..Default::default()
-                                    };
-
-                                    unsafe {
-                                        SyscallReturnCode(ioctl_with_ref(
-                                            self.vm.fd(),
-                                            KVM_SET_MEMORY_ATTRIBUTES(),
-                                            &attributes,
-                                        ))
-                                        .into_empty_result()
-                                        .unwrap()
-                                    }
-
                                     if ret_len != 4096 {
                                         println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
                                         let start_time = Instant::now();
