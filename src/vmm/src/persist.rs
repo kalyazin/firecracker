@@ -127,7 +127,7 @@ pub struct FaultRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FaultReply {
     /// vCPU that encountered the fault, from `FaultRequest` (if present, otherwise 0)
-    pub vcpu: u32,
+    pub vcpu: Option<u32>,
     /// Offset in guest_memfd where population started
     pub offset: u64,
     /// Length of populated area

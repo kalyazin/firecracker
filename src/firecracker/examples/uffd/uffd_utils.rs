@@ -378,7 +378,7 @@ impl Runtime {
                                                         pf_exit_dispatch(&mut self.handler.as_mut().unwrap(), gfn, &mut ret_gpa, &mut ret_len);
 
                                                         let fault_reply = FaultReply {
-                                                            vcpu: fault_request.vcpu,
+                                                            vcpu: Some(fault_request.vcpu),
                                                             offset: ret_gpa,
                                                             len: ret_len,
                                                             flags: fault_request.flags,
@@ -450,7 +450,7 @@ impl Runtime {
                         pf_uffd_dispatch(&mut self.handler.as_mut().unwrap(), &mut ret_gpa, &mut ret_len);
 
                         let fault_reply = FaultReply {
-                            vcpu: 0,
+                            vcpu: None,
                             offset: ret_gpa,
                             len: ret_len,
                             flags: 0,

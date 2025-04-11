@@ -1047,7 +1047,14 @@ impl MutEventSubscriber for Vmm {
                                     }
 
                                     let notpresent_injected = (fault_reply.flags & 1) != 0;
-                                    let vcpu_idx: u64 = fault_reply.vcpu.into();
+                                    let maybe_vcpu_idx = fault_reply.vcpu;
+
+                                    // This is prepopulation. Don't forward to vCPU.
+                                    if maybe_vcpu_idx.is_none() {
+                                        return;
+                                    }
+
+                                    let vcpu_idx: u64 = maybe_vcpu_idx.unwrap().into();
 
                                     // use this as a proxy for async pf for now
                                     if !notpresent_injected {
