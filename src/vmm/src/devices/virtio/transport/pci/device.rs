@@ -982,6 +982,7 @@ mod tests {
                 entropy.clone(),
                 &mut Cmdline::new(1024).unwrap(),
                 false,
+                false,
             )
             .unwrap();
         vmm
