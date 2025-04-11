@@ -984,10 +984,10 @@ impl MutEventSubscriber for Vmm {
                         let notpresent_injected = evt & (1 << (32 + 11)) != 0;
                         let vcpu_idx = evt & 0x7ff;
 
-                        println!(
-                            "APF: req: gpa 0x{:x} token 0x{:x} vcpu 0x{:x}, notpr {}",
-                            gpa, token, vcpu_idx, notpresent_injected
-                        );
+                        /* println!(
+                            "APF: req: gpa 0x{:x} gfn {} token 0x{:x} vcpu 0x{:x}, notpr {}",
+                            gpa, gpa / 4096, token, vcpu_idx, notpresent_injected
+                        ); */
 
                         let fault_request = FaultRequest {
                             vcpu: vcpu_idx as _,
