@@ -320,7 +320,7 @@ pub struct VmState {
 
 #[cfg(target_arch = "x86_64")]
 impl Vm {
-    const DEFAULT_CAPABILITIES: [u32; 14] = [
+    const DEFAULT_CAPABILITIES: [u32; 15] = [
         kvm_bindings::KVM_CAP_IRQCHIP,
         kvm_bindings::KVM_CAP_IOEVENTFD,
         kvm_bindings::KVM_CAP_IRQFD,
@@ -335,6 +335,7 @@ impl Vm {
         kvm_bindings::KVM_CAP_XCRS,
         kvm_bindings::KVM_CAP_XSAVE,
         kvm_bindings::KVM_CAP_EXT_CPUID,
+        241,
     ];
 
     /// Returns a ref to the supported `CpuId` for this Vm.
