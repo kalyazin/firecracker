@@ -564,14 +564,7 @@ pub fn build_microvm_from_snapshot(
     // Guest_memfd
     let guest_memfd = &vmm.guest_memfd;
 
-    // Enable capability. This sets the eventfd to KVM.
     use std::os::fd::AsRawFd;
-    let cap: kvm_enable_cap = kvm_enable_cap {
-        cap: 236,
-        args: [1, eventfd.as_raw_fd() as u64, 0, 0],
-        ..Default::default()
-    };
-    vmm.vm.fd().enable_cap(&cap).unwrap();
 
     let private_memory_real = if let Some(private_memory_tmp) = private_memory.as_ref() {
         private_memory_tmp
