@@ -55,38 +55,19 @@ fn main() {
             let src = uffd_handler.backing_buffer as u64 + gpa;
             let dst_cont = region_base as u64 + *ret_gpa;
             let dst = uffd_handler.guest_memfd_addr as u64 + gpa;
-            // println!("writing (uffd) {gfn}...");
-            /* unsafe {
-                let bytes_written = pwrite64(
-                    uffd_handler.guest_memfd.as_raw_fd(),
-                    src as _,
-                    4096,
-                    (gfn * 4096).try_into().unwrap(),
-                );
-
-                if bytes_written == -1 {
-                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
-                }
-                //println!("Wrote {} bytes", bytes_written);
-            } */
 
             println!("writing (uffd) {gfn}...");
             unsafe {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, *ret_len as _);
             }
 
-            // let dst = (useraddr as usize & !(uffd_handler.page_size - 1)) as *mut libc::c_void;
-            // println!("copying (uffd) {gfn} to {dst:?}...");
             if uffd_handler.bitmap.get(gfn as usize).unwrap() == false {
                 let ret = unsafe {
-                    /* uffd_handler.uffd.copy(uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void,
-                    dst, 4096, true).unwrap() */
                     uffd_continue(uffd_handler.uffd.as_raw_fd(), dst_cont as _, *ret_len)
                 };
                 ret.unwrap();
                 uffd_handler.bitmap.set(gfn as _, true);
             }
-            // println!("continued.");
         },
         |uffd_handler: &mut UffdHandler, gfn: u64, ret_gpa: &mut u64, ret_len: &mut u64| {
             *ret_gpa = 4096 * gfn;
@@ -98,27 +79,25 @@ fn main() {
             let dst_cont = region_base as u64 + *ret_gpa;
             let dst = uffd_handler.guest_memfd_addr as u64 + *ret_gpa;
 
-            println!("copying (vmexit) {}...", gfn);
-            unsafe {
-                let bytes_written = pwrite64(
-                    uffd_handler.guest_memfd.as_raw_fd(),
-                    src as _,
-                    *ret_len as _,
-                    *ret_gpa as _
-                );
-
-                if bytes_written == -1 {
-                    panic!("Failed to call write: {}", std::io::Error::last_os_error());
-                }
-                //println!("Wrote {} bytes", bytes_written);
-            }
-            // println!("copied");
-
-            // Can UFFDIO_CONTINUE, but need to exclude already processed to avoid EEXIST
             if uffd_handler.bitmap.get(gfn as usize).unwrap() == false {
+
+                // println!("copying (vmexit) {}...", gfn);
+                unsafe {
+                    let bytes_written = pwrite64(
+                        uffd_handler.guest_memfd.as_raw_fd(),
+                        src as _,
+                        *ret_len as _,
+                        *ret_gpa as _
+                    );
+
+                    if bytes_written == -1 {
+                        panic!("Failed to call write: {}", std::io::Error::last_os_error());
+                    }
+                    //println!("Wrote {} bytes", bytes_written);
+                }
+                // println!("copied");
+
                 let ret = unsafe {
-                    /* uffd_handler.uffd.copy(uffd_handler.backing_buffer.offset(4096 * gfn as isize) as *const c_void,
-                    dst, 4096, true).unwrap() */
                     uffd_continue(uffd_handler.uffd.as_raw_fd(), dst_cont as _, *ret_len)
                 };
                 ret.unwrap();
