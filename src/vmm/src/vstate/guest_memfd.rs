@@ -69,6 +69,7 @@ ioctl_iow_nr!(
 /// Flag passed to [`KVM_SET_USER_MEMORY_REGION2`] to indicate that a region supports
 /// private memory.
 const KVM_MEM_PRIVATE: u32 = 1 << 2;
+const KVM_MEM_USERFAULT: u32 = 1 << 3;
 
 /// Bitflag to mark a specific (range of) page frame(s) as private
 pub const KVM_MEMORY_ATTRIBUTE_PRIVATE: u64 = 1u64 << 3;
@@ -207,7 +208,7 @@ impl Vm {
             userspace_addr: region.get_host_address(vm_memory::MemoryRegionAddress(0)).unwrap() as u64,
             guest_memfd_offset: region.start_addr().raw_value(),
             guest_memfd: guest_memfd.as_raw_fd() as u32,
-            flags: KVM_MEM_PRIVATE,
+            flags: KVM_MEM_PRIVATE | KVM_MEM_USERFAULT,
             ..Default::default()
         };
 
