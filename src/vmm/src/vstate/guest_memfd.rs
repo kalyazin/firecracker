@@ -145,14 +145,18 @@ struct kvm_fault {
 ioctl_ior_nr!(KVM_READ_USERFAULT, KVMIO, 0xd5, kvm_fault);
 
 /// Creates a `guest_memfd` of the given size in bytes, tied to the given VM.
-pub fn create_guest_memfd(vm: &VmFd, size: u64) -> Result<File, MemoryError> {
+pub fn create_guest_memfd(vm: &VmFd, size: u64, boot: bool) -> Result<File, MemoryError> {
     let guest_memfd = SyscallReturnCode(unsafe {
         ioctl_with_ref(
             vm,
             KVM_CREATE_GUEST_MEMFD(),
             &kvm_create_guest_memfd {
                 size,
-                flags: KVM_GMEM_NO_DIRECT_MAP,
+                flags: if boot {
+                    0
+                } else {
+                    KVM_GMEM_NO_DIRECT_MAP
+                },
                 ..Default::default()
             },
         )

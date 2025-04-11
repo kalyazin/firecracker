@@ -78,6 +78,7 @@ where
         associated_vm: &VmFd,
         mem_size_mib: u64,
         base: *mut u8,
+        boot: bool,
     ) -> Result<(Self, Self, File), MemoryError>;
 
     /// Creates a GuestMemoryMmap from raw regions.
@@ -181,9 +182,10 @@ impl GuestMemoryExtension for GuestMemoryMmap {
         associated_vm: &VmFd,
         mem_size_mib: u64,
         base: *mut u8,
+        boot: bool,
     ) -> Result<(Self, Self, File), MemoryError> {
         let guest_memfd =
-            crate::vstate::guest_memfd::create_guest_memfd(associated_vm, mem_size_mib << 20)?;
+            crate::vstate::guest_memfd::create_guest_memfd(associated_vm, mem_size_mib << 20, boot)?;
 
         let mut offset: u64 = 0;
         let regions = crate::arch::arch_memory_regions((mem_size_mib as usize) << 20)

@@ -184,7 +184,7 @@ fn create_vmm_and_vcpus(
         .map_err(StartMicrovmError::Internal)?;
 
     // "hybrid_memory" is no longer used
-    let (private_memory, hybrid_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib, base)
+    let (private_memory, hybrid_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib, base, uds.is_none())
         .map_err(StartMicrovmError::GuestMemory)?;
 
     vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
