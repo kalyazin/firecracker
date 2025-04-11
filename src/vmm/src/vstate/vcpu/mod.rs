@@ -693,11 +693,6 @@ fn handle_kvm_exit(
                 let ret_gpa = u64::from_be_bytes(ack[8..16].try_into().unwrap());
                 let ret_len = u64::from_be_bytes(ack[16..].try_into().unwrap());
 
-                for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
-                    let gfn = i as u64;
-                    userfault_bitmap.as_mut().unwrap().clear(gfn as _);
-                }
-
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
                 use std::os::raw::c_void;

@@ -1039,6 +1039,13 @@ impl MutEventSubscriber for Vmm {
                                         Some(token_val) => token_val,
                                         None => 0,
                                     };
+
+                                    // Disable userfaults
+                                    for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
+                                        let gfn = i as u64;
+                                        self.vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
+                                    }
+
                                     let notpresent_injected = (fault_reply.flags & 1) != 0;
                                     let vcpu_idx: u64 = fault_reply.vcpu.into();
 
