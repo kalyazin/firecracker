@@ -187,6 +187,17 @@ fn create_vmm_and_vcpus(
     let (private_memory, hybrid_memory, guest_memfd) = GuestMemoryMmap::guest_memfd_backed(vm.fd(), mem_size_mib, base, uds.is_none())
         .map_err(StartMicrovmError::GuestMemory)?;
 
+    use crate::vstate::guest_memfd::UserfaultBitmap;
+    vm.userfault_bitmap = Some(Arc::new(UserfaultBitmap::new((mem_size_mib << 20).try_into().unwrap())));
+
+    // Clear if boot
+    if let None = uds {
+        for i in 0..((mem_size_mib << 20) / 4096) {
+            let gfn = i as u64;
+            vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
+        }
+    }
+
     vm.memory_init(&private_memory, &guest_memfd, track_dirty_pages)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
@@ -951,7 +962,12 @@ fn create_vcpus(
         let exit_evt = exit_evt.try_clone().map_err(VmmError::EventFd)?;
         let reader = reader.try_clone().map_err(VmmError::EventFd)?;
         let writer = writer.try_clone().map_err(VmmError::EventFd)?;
-        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt, reader, writer).map_err(VmmError::VcpuCreate)?;
+        let bm = if let Some(bm) = &vm.userfault_bitmap {
+            Some(bm.clone())
+        } else {
+            None
+        };
+        let vcpu = Vcpu::new(cpu_idx, vm, exit_evt, reader, writer, bm).map_err(VmmError::VcpuCreate)?;
         vcpus.push(vcpu);
     }
     Ok(vcpus)

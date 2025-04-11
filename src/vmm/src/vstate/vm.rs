@@ -8,6 +8,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::fmt;
 use std::fs::File;
+use std::sync::Arc;
 
 use kvm_bindings::KVM_API_VERSION;
 #[cfg(target_arch = "x86_64")]
@@ -111,6 +112,8 @@ pub enum RestoreStateError {
 
 use std::os::unix::net::UnixStream;
 
+use crate::vstate::guest_memfd::UserfaultBitmap;
+
 /// A wrapper around creating and using a VM.
 #[derive(Debug)]
 pub struct Vm {
@@ -133,6 +136,9 @@ pub struct Vm {
 
     /// UDS (UFFD) for sending fault notifications to the handler process.
     pub uds: Option<UnixStream>,
+
+    /// Userfault bitmap
+    pub userfault_bitmap: Option<Arc<UserfaultBitmap>>,
 }
 
 /// Contains Vm functions that are usable across CPU architectures
@@ -182,6 +188,7 @@ impl Vm {
                 supported_cpuid,
                 msrs_to_save,
                 uds: None,
+                userfault_bitmap: None,
             })
         }
     }
@@ -225,7 +232,7 @@ impl Vm {
         if guest_memfd_mmap.num_regions() > self.max_memslots {
             return Err(VmError::NotEnoughMemorySlots);
         }
-        self.set_kvm_memory_regions(guest_memfd_mmap, guest_memfd, track_dirty_pages)?;
+        self.set_kvm_memory_regions(guest_memfd_mmap, guest_memfd, track_dirty_pages, &self.userfault_bitmap.as_ref().unwrap())?;
         #[cfg(target_arch = "x86_64")]
         self.fd
             .set_tss_address(u64_to_usize(crate::arch::x86_64::layout::KVM_TSS_ADDRESS))
@@ -239,12 +246,13 @@ impl Vm {
         guest_memfd_mmap: &GuestMemoryMmap,
         guest_memfd: &File,
         _track_dirty_pages: bool,
+        userfault_bitmap: &Arc<UserfaultBitmap>,
     ) -> Result<(), VmError> {
         guest_memfd_mmap
             .iter()
             .enumerate()
             .try_for_each(|(index, region)| {
-                self.set_userspace_memory_region2(index as u32, region, guest_memfd)
+                self.set_userspace_memory_region2(index as u32, region, guest_memfd, userfault_bitmap)
             })
     }
 

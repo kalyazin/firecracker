@@ -55,7 +55,8 @@ struct kvm_userspace_memory_region2 {
     guest_memfd_offset: u64,
     guest_memfd: u32,
     pad1: u32,
-    pad2: [u64; 14],
+    userfault_bitmap: u64,
+    pad2: [u64; 13],
 }
 
 // VM ioctl for registering memory regions that have a guest_memfd associated with them
@@ -178,12 +179,82 @@ pub fn read_fault(vm: &VmFd) -> u64 {
     fault.address
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Debug)]
+pub struct UserfaultBitmap {
+    bits: Box<[AtomicU64]>,
+    size: usize,
+}
+
+impl UserfaultBitmap {
+    pub fn new(size_in_bits: usize) -> Self {
+        let num_words = (size_in_bits + 63) / 64;
+        let mut bits = Vec::with_capacity(num_words);
+        for _ in 0..num_words {
+            bits.push(AtomicU64::new(0xffff_ffff_ffff_ffff));
+        }
+
+        UserfaultBitmap {
+            bits: bits.into_boxed_slice(),
+            size: size_in_bits,
+        }
+    }
+
+    pub fn set(&self, index: usize) {
+        if index >= self.size {
+            panic!("Index out of bounds");
+        }
+        let word_index = index / 64;
+        let bit_index = index % 64;
+        let mask = 1u64 << bit_index;
+
+        self.bits[word_index].fetch_or(mask, Ordering::SeqCst);
+    }
+
+    pub fn clear(&self, index: usize) {
+        if index >= self.size {
+            panic!("Index out of bounds");
+        }
+        let word_index = index / 64;
+        let bit_index = index % 64;
+        let mask = !(1u64 << bit_index);
+
+        self.bits[word_index].fetch_and(mask, Ordering::SeqCst);
+    }
+
+    pub fn get(&self, index: usize) -> bool {
+        if index >= self.size {
+            panic!("Index out of bounds");
+        }
+        let word_index = index / 64;
+        let bit_index = index % 64;
+        let mask = 1u64 << bit_index;
+
+        (self.bits[word_index].load(Ordering::SeqCst) & mask) != 0
+    }
+
+    pub fn as_ptr(&self) -> *const AtomicU64 {
+        self.bits.as_ptr()
+    }
+
+    pub fn as_mut_raw_ptr(&mut self) -> *mut AtomicU64 {
+        self.bits.as_ptr() as *mut AtomicU64
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
+use std::sync::Arc;
 impl Vm {
     pub fn set_userspace_memory_region2(
         &self,
         slot: u32,
         region: &GuestRegionMmap,
         guest_memfd: &File,
+        userfault_bitmap: &Arc<UserfaultBitmap>
     ) -> Result<(), VmError> {
         // Set the "userspace_addr" to an mmap of the guest_memfd. Since the guest_memfd is mapped
         // into host userspace, this will trick KVM into gup-ing guest_memfd whenever it thinks
@@ -209,6 +280,7 @@ impl Vm {
             guest_memfd_offset: region.start_addr().raw_value(),
             guest_memfd: guest_memfd.as_raw_fd() as u32,
             flags: KVM_MEM_PRIVATE | KVM_MEM_USERFAULT,
+            userfault_bitmap: userfault_bitmap.as_ptr() as u64,
             ..Default::default()
         };
 

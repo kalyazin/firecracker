@@ -88,6 +88,8 @@ pub struct StartThreadedError(std::io::Error);
 use std::fs::File;
 use std::os::unix::net::UnixStream;
 
+use crate::vstate::guest_memfd::UserfaultBitmap;
+
 /// A wrapper around creating and using a vcpu.
 #[derive(Debug)]
 pub struct Vcpu {
@@ -118,6 +120,9 @@ pub struct Vcpu {
     pub mem_src_wrapper: ConstPtrWrapper,
     /// guest_memfd
     pub guest_memfd: File,
+
+    /// Userfault bitmap
+    pub userfault_bitmap: Option<Arc<UserfaultBitmap>>,
 }
 
 /// Wrapper around *const u8
@@ -215,7 +220,7 @@ impl Vcpu {
     /// * `index` - Represents the 0-based CPU index between [0, max vcpus).
     /// * `vm` - The vm to which this vcpu will get attached.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd, reader: File, writer: File) -> Result<Self, VcpuError> {
+    pub fn new(index: u8, vm: &Vm, exit_evt: EventFd, reader: File, writer: File, bitmap: Option<Arc<UserfaultBitmap>>) -> Result<Self, VcpuError> {
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
         let kvm_vcpu = KvmVcpu::new(index, vm).unwrap();
@@ -252,6 +257,7 @@ impl Vcpu {
             uds: stream,
             mem_src_wrapper: ConstPtrWrapper(ptr::null()),
             guest_memfd: unsafe { File::from_raw_fd(666) },
+            userfault_bitmap: bitmap,
         })
     }
 
@@ -512,6 +518,7 @@ impl Vcpu {
                 &self.writer,
                 mem_src,
                 &self.guest_memfd,
+                &mut self.userfault_bitmap,
             ),
         }
     }
@@ -528,6 +535,7 @@ fn handle_kvm_exit(
     mut writer: &File,
     mem_src: *const u8,
     guest_memfd: &File,
+    userfault_bitmap: &mut Option<Arc<UserfaultBitmap>>,
 ) -> Result<VcpuEmulation, VcpuError> {
     match emulation_result {
         Ok(run) => match run {
@@ -685,30 +693,14 @@ fn handle_kvm_exit(
                 let ret_gpa = u64::from_be_bytes(ack[8..16].try_into().unwrap());
                 let ret_len = u64::from_be_bytes(ack[16..].try_into().unwrap());
 
+                for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
+                    let gfn = i as u64;
+                    userfault_bitmap.as_mut().unwrap().clear(gfn as _);
+                }
+
                 use utils::ioctl::ioctl_with_ref;
                 use utils::syscall::SyscallReturnCode;
                 use std::os::raw::c_void;
-
-                use crate::vstate::guest_memfd::{
-                    kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_SET_MEMORY_ATTRIBUTES,
-                };
-
-                let attributes = kvm_memory_attributes {
-                    address: ret_gpa,
-                    size: ret_len,
-                    attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE,
-                    ..Default::default()
-                };
-
-                unsafe {
-                    SyscallReturnCode(ioctl_with_ref(
-                        kvm_fd,
-                        KVM_SET_MEMORY_ATTRIBUTES(),
-                        &attributes,
-                    ))
-                    .into_empty_result()
-                    .unwrap()
-                }
 
                 if ret_len != 4096 {
                     println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
