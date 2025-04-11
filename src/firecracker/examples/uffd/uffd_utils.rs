@@ -369,7 +369,7 @@ impl Runtime {
                                             Ok(msg) => {
                                                 match msg {
                                                     UffdMsgFromFirecracker::FaultReq(fault_request) => {
-                                                        println!("Received FaultRequest: {:?}", fault_request);
+                                                        // println!("Received FaultRequest: {:?}", fault_request);
                                                         let gpa = fault_request.offset;
                                                         let gfn = gpa / 4096;
 
