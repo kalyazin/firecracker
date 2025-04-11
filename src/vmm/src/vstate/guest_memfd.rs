@@ -133,7 +133,7 @@ ioctl_iow_nr!(KVM_ASYNC_PF_READY, KVMIO, 0xd6, kvm_async_pf_ready);
 ioctl_iow_nr!(KVM_GUEST_MEMFD_COPY, KVMIO, 0xd7, kvm_guest_memfd_copy);
 
 // VM ioctl to prefault SPTEs
-ioctl_iowr_nr!(KVM_PRE_FAULT_MEMORY, KVMIO, 0xd8, kvm_pre_fault_memory);
+ioctl_iowr_nr!(KVM_PRE_FAULT_MEMORY, KVMIO, 0xd5, kvm_pre_fault_memory);
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
