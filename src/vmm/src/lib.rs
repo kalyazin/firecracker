@@ -979,19 +979,22 @@ impl MutEventSubscriber for Vmm {
                     Ok(()) => {
                         let evt: u64 = u64::from_be_bytes(req.as_slice().try_into().unwrap());
 
-                        let gpa = evt & 0xffff_ffff;
-                        let token = (evt >> 32) & 0xffff_f7ff;
-                        let notpresent_injected = evt & (1 << (32 + 11)) != 0;
+                        let gpa = evt; // & 0xffff_ffff;
+                        let token = 0; // (evt >> 32) & 0xffff_f7ff;
+                        let notpresent_injected = false; // evt & (1 << (32 + 11)) != 0;
                         let vcpu_idx = evt & 0x7ff;
+
+                        use crate::arch::aarch64::layout::DRAM_MEM_START;
+                        let gfn = (gpa - DRAM_MEM_START) & !0xfff;
 
                         /* println!(
                             "APF: req: gpa 0x{:x} gfn {} token 0x{:x} vcpu 0x{:x}, notpr {}",
-                            gpa, gpa / 4096, token, vcpu_idx, notpresent_injected
+                            gpa, gfn, token, vcpu_idx, notpresent_injected
                         ); */
 
                         let fault_request = FaultRequest {
                             vcpu: vcpu_idx as _,
-                            offset: gpa & !0xfff,
+                            offset: gfn,
                             flags: notpresent_injected.into(),
                             token: if notpresent_injected {
                                 Some(token as _)
@@ -1032,16 +1035,19 @@ impl MutEventSubscriber for Vmm {
                                     // println!("Received FaultReply: {:?}", fault_reply);
 
                                     let evt: u64 = 0;
-                                    let ret_gpa: u64 = fault_reply.offset;
+                                    use crate::arch::aarch64::layout::DRAM_MEM_START;
+                                    let ret_gpa: u64 = fault_reply.offset + DRAM_MEM_START;
                                     let ret_len: u64 = fault_reply.len;
                                     let gpa: u64 = 0;
                                     let token: u32 = match fault_reply.token {
                                         Some(token_val) => token_val,
                                         None => 0,
                                     };
+                                    let bit_idx_start = fault_reply.offset / 4096;
+                                    let bit_idx_end = (fault_reply.offset + fault_reply.len) / 4096;
 
                                     // Disable userfaults
-                                    for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
+                                    for i in bit_idx_start..bit_idx_end {
                                         let gfn = i as u64;
                                         self.vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
                                     }

@@ -623,8 +623,8 @@ fn handle_kvm_exit(
                     let token = size as u32;
                     let notpresent_injected = ((flags & (1 << 6)) != 0) as u64;
 
-                    let evt: u64 =
-                        ((token as u64) << 32) | (notpresent_injected << (32 + 11)) | gpa;
+                    let evt: u64 = gpa;
+                        // ((token as u64) << 32) | (notpresent_injected << (32 + 11)) | gpa;
 
                     // Async PF handling begin
                     let bytes = evt.to_be_bytes();
