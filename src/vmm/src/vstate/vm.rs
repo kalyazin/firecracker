@@ -160,9 +160,13 @@ impl Vm {
 
         let max_memslots = kvm.get_nr_memslots();
         // Create fd for interacting with kvm-vm specific functions.
+        #[cfg(target_arch = "x86_64")]
         let vm_fd = kvm
             .create_vm_with_type(crate::vstate::guest_memfd::KVM_X86_SW_PROTECTED_VM)
             .map_err(VmError::VmFd)?;
+
+        #[cfg(target_arch = "aarch64")]
+        let vm_fd = kvm.create_vm().map_err(VmError::VmFd)?;
 
         #[cfg(target_arch = "aarch64")]
         {
@@ -171,6 +175,8 @@ impl Vm {
                 max_memslots,
                 kvm_cap_modifiers,
                 irqchip_handle: None,
+                uds: None,
+                userfault_bitmap: None,
             })
         }
 

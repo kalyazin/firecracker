@@ -266,7 +266,7 @@ fn create_vmm_and_vcpus(
     // Search for `kvm_arch_vcpu_create` in arch/arm/kvm/arm.c.
     #[cfg(target_arch = "aarch64")]
     let vcpus = {
-        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt).map_err(Internal)?;
+        let vcpus = create_vcpus(&vm, vcpu_count, &vcpus_exit_evt, &vcpu_reader, &vcpu_writer).map_err(Internal)?;
         setup_interrupt_controller(&mut vm, vcpu_count)?;
         vcpus
     };
@@ -484,7 +484,10 @@ pub enum BuildMicrovmFromSnapshotError {
     VMGenIDUpdate(std::io::Error),
 }
 
+#[cfg(target_arch = "x86_64")]
 use kvm_bindings::Msrs;
+
+#[cfg(target_arch = "x86_64")]
 fn get_msr_value(saved_msrs: &[Msrs], msr_id: u32) -> u64 {
     for msrs in saved_msrs {
         // Get reference to the underlying kvm_msrs structure
