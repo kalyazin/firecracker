@@ -1016,19 +1016,47 @@ impl MutEventSubscriber for Vmm {
                 }
             }
         } else if source == self.uds_stream.as_ref().unwrap().as_raw_fd() && event_set == EventSet::IN {
-            let mut buffer = [0u8; 1024]; // or whatever size is appropriate
+            let mut buffer = [0u8; 8192];
+            let mut data_len = 0;
 
             loop {
-                match self.uds_stream.as_ref().unwrap().read(&mut buffer) {
+                match self.uds_stream.as_ref().unwrap().read(&mut buffer[data_len..]) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
-                        let json_str = String::from_utf8_lossy(&buffer[..n]);
-                        let deserializer = Deserializer::from_str(&json_str);
-                        let stream = deserializer.into_iter::<FaultReply>();
+                        data_len += n;
 
-                        for result in stream {
-                            match result {
+                        let mut processed_bytes = 0;
+                        while processed_bytes < data_len {
+                            let remaining_data = &buffer[processed_bytes..data_len];
+
+                            // Find the end of the current JSON object
+                            let mut brace_count = 0;
+                            let mut message_end = None;
+
+                            for (i, &byte) in remaining_data.iter().enumerate() {
+                                if byte == b'{' {
+                                    brace_count += 1;
+                                } else if byte == b'}' {
+                                    brace_count -= 1;
+                                    if brace_count == 0 {
+                                        message_end = Some(i + 1);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            let message_end = match message_end {
+                                Some(end) => end,
+                                None => {
+                                    panic!("Not enough data for complete message. Processed {} of {} bytes", processed_bytes, data_len);
+                                }
+                            };
+
+                            // Parse just this complete JSON object
+                            match serde_json::from_slice::<FaultReply>(&remaining_data[..message_end]) {
                                 Ok(fault_reply) => {
+                                    processed_bytes += message_end;
+
                                     // println!("Received FaultReply: {:?}", fault_reply);
 
                                     let evt: u64 = 0;
@@ -1040,7 +1068,7 @@ impl MutEventSubscriber for Vmm {
                                         None => 0,
                                     };
 
-                                    // Disable userfaults
+                                    // println!("Disabling userfaults for gfns {} to {}", ret_gpa / 4096, (ret_gpa + ret_len) / 4096);
                                     for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
                                         let gfn = i as u64;
                                         self.vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
@@ -1049,21 +1077,19 @@ impl MutEventSubscriber for Vmm {
                                     let notpresent_injected = (fault_reply.flags & 1) != 0;
                                     let maybe_vcpu_idx = fault_reply.vcpu;
 
-                                    // This is prepopulation. Don't forward to vCPU.
                                     if maybe_vcpu_idx.is_none() {
-                                        return;
+                                        continue;
                                     }
 
                                     let vcpu_idx: u64 = maybe_vcpu_idx.unwrap().into();
 
-                                    // use this as a proxy for async pf for now
                                     if !notpresent_injected {
                                         let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
                                         self.writer.write_all(&bytes).unwrap();
-                                        return;
+                                        continue;
                                     }
 
-                                    if ret_len != 4096 {
+                                    if ret_len > 4096 {
                                         println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
                                         let start_time = Instant::now();
                                         let pre_fault = kvm_pre_fault_memory {
@@ -1105,12 +1131,29 @@ impl MutEventSubscriber for Vmm {
                                 }
                             }
                         }
+
+                        // Move any remaining partial message to start of buffer
+                        if processed_bytes > 0 {
+                            if processed_bytes < data_len {
+                                buffer.copy_within(processed_bytes..data_len, 0);
+                            }
+                            data_len -= processed_bytes;
+                        }
+
+                        // Check if buffer is full but no complete message could be processed
+                        if data_len == buffer.len() && processed_bytes == 0 {
+                            panic!("Buffer full but no complete message could be processed");
+                        }
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => {
                         break;
                     },
                     Err(e) => panic!("{e}"),
                 }
+            }
+
+            if data_len > 0 {
+                panic!("Incomplete message remaining: {} bytes", data_len);
             }
         } else {
             error!("Spurious EventManager event for handler: Vmm");

@@ -697,7 +697,7 @@ fn handle_kvm_exit(
                 use utils::syscall::SyscallReturnCode;
                 use std::os::raw::c_void;
 
-                if ret_len != 4096 {
+                if ret_len > 4096 {
                     println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
                     let start_time = Instant::now();
                     let pre_fault = kvm_pre_fault_memory {
