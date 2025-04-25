@@ -1016,144 +1016,85 @@ impl MutEventSubscriber for Vmm {
                 }
             }
         } else if source == self.uds_stream.as_ref().unwrap().as_raw_fd() && event_set == EventSet::IN {
-            let mut buffer = [0u8; 8192];
-            let mut data_len = 0;
+            const BUFFER_SIZE: usize = 4096;
+
+            let stream = self.uds_stream.as_mut().unwrap();
+
+            let mut buffer = [0u8; BUFFER_SIZE];
+            let mut current_pos = 0;
 
             loop {
-                match self.uds_stream.as_ref().unwrap().read(&mut buffer[data_len..]) {
-                    Ok(0) => break, // EOF
-                    Ok(n) => {
-                        data_len += n;
+                // Read more data into the buffer if there's space
+                if current_pos < BUFFER_SIZE {
+                    match stream.read(&mut buffer[current_pos..]) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => current_pos += n,
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                        Err(e) => panic!("Read error: {}", e),
+                    }
+                }
 
-                        let mut processed_bytes = 0;
-                        while processed_bytes < data_len {
-                            let remaining_data = &buffer[processed_bytes..data_len];
+                let mut parser = serde_json::Deserializer::from_slice(&buffer[..current_pos]).into_iter::<FaultReply>();
+                let mut total_consumed = 0;
+                let mut needs_more = false;
 
-                            // Find the end of the current JSON object
-                            let mut brace_count = 0;
-                            let mut message_end = None;
+                while let Some(result) = parser.next() {
+                    match result {
+                        Ok(fault_reply) => {
+                            // println!("Received FaultReply: {:?}", fault_reply);
 
-                            for (i, &byte) in remaining_data.iter().enumerate() {
-                                if byte == b'{' {
-                                    brace_count += 1;
-                                } else if byte == b'}' {
-                                    brace_count -= 1;
-                                    if brace_count == 0 {
-                                        message_end = Some(i + 1);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            let message_end = match message_end {
-                                Some(end) => end,
-                                None => {
-                                    panic!("Not enough data for complete message. Processed {} of {} bytes", processed_bytes, data_len);
-                                }
+                            let evt: u64 = 0;
+                            let ret_gpa: u64 = fault_reply.offset;
+                            let ret_len: u64 = fault_reply.len;
+                            let _token: u32 = match fault_reply.token {
+                                Some(token_val) => token_val,
+                                None => 0,
                             };
 
-                            // Parse just this complete JSON object
-                            match serde_json::from_slice::<FaultReply>(&remaining_data[..message_end]) {
-                                Ok(fault_reply) => {
-                                    processed_bytes += message_end;
+                            // println!("Disabling userfaults for gfns {} to {}", ret_gpa / 4096, (ret_gpa + ret_len) / 4096);
+                            for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
+                                let gfn = i as u64;
+                                self.vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
+                            }
 
-                                    // println!("Received FaultReply: {:?}", fault_reply);
+                            let notpresent_injected = (fault_reply.flags & 1) != 0;
+                            let maybe_vcpu_idx = fault_reply.vcpu;
 
-                                    let evt: u64 = 0;
-                                    let ret_gpa: u64 = fault_reply.offset;
-                                    let ret_len: u64 = fault_reply.len;
-                                    let gpa: u64 = 0;
-                                    let token: u32 = match fault_reply.token {
-                                        Some(token_val) => token_val,
-                                        None => 0,
-                                    };
+                            if maybe_vcpu_idx.is_none() {
+                            } else {
+                                let _vcpu_idx: u64 = maybe_vcpu_idx.unwrap().into();
 
-                                    // println!("Disabling userfaults for gfns {} to {}", ret_gpa / 4096, (ret_gpa + ret_len) / 4096);
-                                    for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
-                                        let gfn = i as u64;
-                                        self.vm.userfault_bitmap.as_mut().unwrap().clear(gfn as _);
-                                    }
-
-                                    let notpresent_injected = (fault_reply.flags & 1) != 0;
-                                    let maybe_vcpu_idx = fault_reply.vcpu;
-
-                                    if maybe_vcpu_idx.is_none() {
-                                        continue;
-                                    }
-
-                                    let vcpu_idx: u64 = maybe_vcpu_idx.unwrap().into();
-
-                                    if !notpresent_injected {
-                                        let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
-                                        self.writer.write_all(&bytes).unwrap();
-                                        continue;
-                                    }
-
-                                    if ret_len > 4096 {
-                                        println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
-                                        let start_time = Instant::now();
-                                        let pre_fault = kvm_pre_fault_memory {
-                                            gpa: ret_gpa,
-                                            size: ret_len,
-                                            ..Default::default()
-                                        };
-
-                                        unsafe {
-                                            SyscallReturnCode(ioctl_with_ref(
-                                                &self.vcpu_fds[vcpu_idx as usize],
-                                                KVM_PRE_FAULT_MEMORY(),
-                                                &pre_fault,
-                                            ))
-                                            .into_empty_result()
-                                            .unwrap()
-                                        }
-                                        let elapsed_time = start_time.elapsed();
-                                        println!("prefaulted in {:?}", elapsed_time);
-                                    }
-
-                                    let ready = kvm_async_pf_ready {
-                                        gpa,
-                                        token: token.try_into().unwrap(),
-                                        notpresent_injected: notpresent_injected.try_into().unwrap(),
-                                    };
-                                    unsafe {
-                                        SyscallReturnCode(ioctl_with_ref(
-                                            &self.vcpu_fds[vcpu_idx as usize],
-                                            KVM_ASYNC_PF_READY(),
-                                            &ready,
-                                        ))
-                                        .into_empty_result()
-                                        .unwrap()
-                                    }
-                                },
-                                Err(e) => {
-                                    panic!("Failed to parse FaultReply: {}", e);
+                                if !notpresent_injected {
+                                    let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
+                                    self.writer.write_all(&bytes).unwrap();
                                 }
                             }
-                        }
 
-                        // Move any remaining partial message to start of buffer
-                        if processed_bytes > 0 {
-                            if processed_bytes < data_len {
-                                buffer.copy_within(processed_bytes..data_len, 0);
-                            }
-                            data_len -= processed_bytes;
+                            total_consumed = parser.byte_offset();
                         }
-
-                        // Check if buffer is full but no complete message could be processed
-                        if data_len == buffer.len() && processed_bytes == 0 {
-                            panic!("Buffer full but no complete message could be processed");
+                        Err(e) if e.is_eof() => {
+                            needs_more = true;
+                            break;
+                        }
+                        Err(e) => {
+                            println!("Buffer content: {:?}", std::str::from_utf8(&buffer[..current_pos]));
+                            panic!("Invalid JSON: {}", e);
                         }
                     }
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        break;
-                    },
-                    Err(e) => panic!("{e}"),
                 }
-            }
 
-            if data_len > 0 {
-                panic!("Incomplete message remaining: {} bytes", data_len);
+                if total_consumed > 0 {
+                    buffer.copy_within(total_consumed..current_pos, 0);
+                    current_pos -= total_consumed;
+                }
+
+                if needs_more {
+                    continue;
+                }
+
+                if current_pos == 0 {
+                    break;
+                }
             }
         } else {
             error!("Spurious EventManager event for handler: Vmm");
