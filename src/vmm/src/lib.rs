@@ -1050,6 +1050,7 @@ impl MutEventSubscriber for Vmm {
                                 Some(token_val) => token_val,
                                 None => 0,
                             };
+                            let zero = fault_reply.zero;
 
                             // println!("Disabling userfaults for gfns {} to {}", ret_gpa / 4096, (ret_gpa + ret_len) / 4096);
                             for i in (ret_gpa / 4096)..((ret_gpa + ret_len) / 4096) {
@@ -1065,7 +1066,7 @@ impl MutEventSubscriber for Vmm {
                                 let _vcpu_idx: u64 = maybe_vcpu_idx.unwrap().into();
 
                                 if !notpresent_injected {
-                                    let bytes = [evt.to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
+                                    let bytes = [(zero as u64).to_be_bytes(), ret_gpa.to_be_bytes(), ret_len.to_be_bytes()].concat();
                                     self.writer.write_all(&bytes).unwrap();
                                 }
                             }

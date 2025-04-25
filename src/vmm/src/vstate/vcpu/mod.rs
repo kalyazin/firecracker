@@ -689,7 +689,7 @@ fn handle_kvm_exit(
                 let ack = &mut [0; 24];
                 let _ret = reader.read_exact(ack);
 
-                let _one = u64::from_be_bytes(ack[..8].try_into().unwrap());
+                let zero = u64::from_be_bytes(ack[..8].try_into().unwrap()) == 1;
                 let ret_gpa = u64::from_be_bytes(ack[8..16].try_into().unwrap());
                 let ret_len = u64::from_be_bytes(ack[16..].try_into().unwrap());
 
@@ -697,7 +697,7 @@ fn handle_kvm_exit(
                 use utils::syscall::SyscallReturnCode;
                 use std::os::raw::c_void;
 
-                if ret_len > 4096 {
+                if ret_len > 4096 && !zero {
                     println!("about to prefault all pages in gpa 0x{ret_gpa:x} size {ret_len}...");
                     let start_time = Instant::now();
                     let pre_fault = kvm_pre_fault_memory {

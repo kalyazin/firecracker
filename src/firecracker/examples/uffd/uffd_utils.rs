@@ -383,6 +383,7 @@ impl Runtime {
                                                             len: ret_len,
                                                             flags: fault_request.flags,
                                                             token: fault_request.token,
+                                                            zero: false,
                                                         };
 
                                                         let reply = UffdMsgToFirecracker::FaultRep(fault_reply);
@@ -455,6 +456,7 @@ impl Runtime {
                             len: ret_len,
                             flags: 0,
                             token: None,
+                            zero: false,
                         };
 
                         let reply = UffdMsgToFirecracker::FaultRep(fault_reply);

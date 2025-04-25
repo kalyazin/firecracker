@@ -136,6 +136,8 @@ pub struct FaultReply {
     pub flags: u64,
     /// Async PF token, must be copied from `FaultRequest`, otherwise None
     pub token: Option<u32>,
+    /// Whether the populated pages are zero pages
+    pub zero: bool,
 }
 
 /// UffdMsgFromFirecracker
