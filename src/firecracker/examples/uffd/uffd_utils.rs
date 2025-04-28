@@ -136,8 +136,8 @@ impl UffdHandler {
         assert!(page_size.is_power_of_two());
 
         // guest_memfd uffd
-        let uffd = unsafe { Uffd::from_raw_fd(fds[1]) };
-        let guest_memfd = unsafe { File::from_raw_fd(fds[2].into_raw_fd()) };
+        let uffd = unsafe { Uffd::from_raw_fd(fds[0]) };
+        let guest_memfd = unsafe { File::from_raw_fd(fds[1].into_raw_fd()) };
 
         let mem_regions = create_mem_regions(&mappings, page_size);
 
