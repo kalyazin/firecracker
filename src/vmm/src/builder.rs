@@ -588,7 +588,6 @@ pub fn build_microvm_from_snapshot(
             size: mem_region.size(),
             offset: state_region.offset,
             page_size_kib: 4096,
-            is_guest_memfd: true,
         });
     }
     let backend_mappings_json = serde_json::to_string(&backend_mappings).unwrap();

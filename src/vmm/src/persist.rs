@@ -106,8 +106,6 @@ pub struct GuestRegionUffdMapping {
     pub offset: u64,
     /// The configured page size for this memory region.
     pub page_size_kib: usize,
-    /// is guest memfd
-    pub is_guest_memfd: bool,
 }
 
 /// FaultRequest
@@ -628,7 +626,6 @@ fn create_guest_memory(
             size: mem_region.size(),
             offset: state_region.offset,
             page_size_kib: huge_pages.page_size_kib(),
-            is_guest_memfd: false,
         });
     }
 
