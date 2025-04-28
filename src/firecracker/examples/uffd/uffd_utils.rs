@@ -388,6 +388,7 @@ impl Runtime {
 
                                                         let reply = UffdMsgToFirecracker::FaultRep(fault_reply);
                                                         let reply_json = serde_json::to_string(&reply).unwrap();
+                                                        // println!("Sending FaultReply: {:?}", reply_json);
                                                         self.stream.write(reply_json.as_bytes()).unwrap();
                                                     },
                                                     UffdMsgFromFirecracker::Mappings(mappings) => {

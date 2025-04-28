@@ -1000,6 +1000,7 @@ impl MutEventSubscriber for Vmm {
                             }
                         };
                         let fault_request_json = serde_json::to_string(&fault_request).unwrap();
+                        // println!("Sending FaultRequest: {:?}", fault_request);
                         self.uds_stream.as_ref().unwrap().write(fault_request_json.as_bytes()).unwrap();
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
