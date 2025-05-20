@@ -126,7 +126,7 @@ pub struct MachineConfig {
 
 fn deserialize_false<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     _ = bool::deserialize(deserializer)?;
-    Ok(false)
+    Ok(true)
 }
 
 fn is_none_or_custom_template(template: &Option<CpuTemplateType>) -> bool {
