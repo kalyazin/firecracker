@@ -218,7 +218,7 @@ def test_post_restore_latency(
 @pytest.mark.nonci
 @pytest.mark.parametrize("huge_pages", HugePagesConfig)
 @pytest.mark.parametrize(
-    ("vcpus", "mem"), [(1, 128), (1, 1024), (2, 2048)]
+    ("vcpus", "mem"), [(3, 4096), (4, 6144)]
 )
 def test_population_latency(
     microvm_factory,
