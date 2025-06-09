@@ -98,7 +98,7 @@ pub struct MachineConfig {
     /// Whether guest_memfd should be used to back normal guest memory. If this is enabled
     /// and any devices are attached to the VM, userspace bounce buffers will be used
     /// as I/O into secret free memory is not possible.
-    #[serde(default)]
+    #[serde(default = "default_enable_secret_hiding")]
     pub secret_free: bool,
     /// Enables or disabled SMT.
     #[serde(default)]
@@ -122,6 +122,11 @@ pub struct MachineConfig {
     #[cfg(feature = "gdb")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gdb_socket_path: Option<String>,
+}
+
+fn default_enable_secret_hiding() -> bool {
+    crate::logger::warn!("Secret Hiding Enabled By Default!");
+    true
 }
 
 fn is_none_or_custom_template(template: &Option<CpuTemplateType>) -> bool {
