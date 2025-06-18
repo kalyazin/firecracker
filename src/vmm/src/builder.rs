@@ -4,8 +4,9 @@
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
 use std::fmt::Debug;
+use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::MetadataExt;
 #[cfg(feature = "gdb")]
 use std::sync::mpsc;
@@ -162,7 +163,7 @@ fn create_vmm_and_vcpus(
     // Instantiate ACPI device manager.
     let acpi_device_manager = ACPIDeviceManager::new();
 
-    let (vcpus, vcpus_exit_evt, userfault_channels) = vm.create_vcpus(vcpu_count, secret_free)?;
+    let (vcpus, vcpus_exit_evt) = vm.create_vcpus(vcpu_count, secret_free)?;
 
     #[cfg(target_arch = "x86_64")]
     let pio_device_manager = {
@@ -192,7 +193,6 @@ fn create_vmm_and_vcpus(
         vm,
         uffd: None,
         uffd_socket: None,
-        userfault_channels,
         vcpus_handles: Vec::new(),
         vcpus_exit_evt,
         resource_allocator,
@@ -483,6 +483,49 @@ pub enum BuildMicrovmFromSnapshotError {
     UserfaultBitmapMemfd(#[from] crate::vstate::memory::MemoryError),
 }
 
+fn memfd_to_slice(memfd: &Option<File>) -> Option<&[u8]> {
+    let bitmap_addr = if let Some(bitmap_file) = memfd {
+        // SAFETY: the arguments to mmap cannot cause any memory unsafety in the rust sense
+        let bitmap_addr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                usize::try_from(
+                    bitmap_file
+                        .metadata()
+                        .expect("Failed to get metadata")
+                        .len(),
+                )
+                .expect("userfault bitmap file size is too large"),
+                libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                bitmap_file.as_raw_fd(),
+                0,
+            )
+        };
+
+        if bitmap_addr == libc::MAP_FAILED {
+            panic!(
+                "Failed to mmap userfault bitmap file: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+
+        bitmap_addr
+    } else {
+        std::ptr::null_mut()
+    };
+
+    // convert bitmap_addr to a slice to be used in register_memory_regions
+    let slice = if bitmap_addr.is_null() {
+        None
+    } else {
+        // SAFETY: `bitmap_addr` is a valid memory address returned by `mmap`.
+        Some(unsafe { std::slice::from_raw_parts(bitmap_addr as *const u8, 0) })
+    };
+
+    slice
+}
+
 /// Builds and starts a microVM based on the provided MicrovmState.
 ///
 /// An `Arc` reference of the built `Vmm` is also plugged in the `EventManager`, while another
@@ -581,8 +624,10 @@ pub fn build_microvm_from_snapshot(
         }
     };
 
+    let userfault_bitmap = memfd_to_slice(&userfault_bitmap_memfd);
+
     vmm.vm
-        .register_memory_regions(guest_memory, userfault_bitmap_memfd.as_ref())
+        .register_memory_regions(guest_memory, userfault_bitmap)
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vmm.uffd = uffd;
@@ -1046,7 +1091,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        let (_, vcpus_exit_evt, _) = vm.create_vcpus(1, false).unwrap();
+        let (_, vcpus_exit_evt) = vm.create_vcpus(1, false).unwrap();
 
         Vmm {
             events_observer: Some(std::io::stdin()),
@@ -1056,7 +1101,6 @@ pub(crate) mod tests {
             vm,
             uffd: None,
             uffd_socket: None,
-            userfault_channels: None,
             vcpus_handles: Vec::new(),
             vcpus_exit_evt,
             resource_allocator: ResourceAllocator::new().unwrap(),

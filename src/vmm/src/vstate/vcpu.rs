@@ -31,10 +31,14 @@ use crate::logger::{IncMetric, METRICS};
 use crate::seccomp::{BpfProgram, BpfProgramRef};
 use crate::utils::signal::{Killable, register_signal_handler, sigrtmin};
 use crate::utils::sm::StateMachine;
-use crate::vstate::vm::{UserfaultChannel, Vm};
+use crate::vstate::vm::{UserfaultData, Vm};
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub const VCPU_RTSIG_OFFSET: i32 = 0;
+
+// TODO: remove when KVM userfault support is merged upstream.
+/// VM exit due to a userfault.
+const KVM_MEMORY_EXIT_FLAG_USERFAULT: u64 = 1 << 4;
 
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
@@ -109,8 +113,8 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     /// The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
-    /// Channel for communicating userfaults with the VMM thread
-    userfault_channel: Option<UserfaultChannel>,
+    /// EventFd to notify the vCPU that a userfault has been resolved
+    userfault_resolved: Option<EventFd>,
 }
 
 impl Vcpu {
@@ -203,12 +207,13 @@ impl Vcpu {
     /// * `index` - Represents the 0-based CPU index between [0, max vcpus).
     /// * `vm` - The vm to which this vcpu will get attached.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    /// * `userfault_channel` - An optional userfault channel for handling page faults.
+    /// * `userfault_resolved` - An optional `EventFd` that will be written into when a userfault is
+    ///   resolved.
     pub fn new(
         index: u8,
         vm: &Vm,
         exit_evt: EventFd,
-        userfault_channel: Option<UserfaultChannel>,
+        userfault_resolved: Option<EventFd>,
     ) -> Result<Self, VcpuError> {
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
@@ -223,7 +228,7 @@ impl Vcpu {
             #[cfg(feature = "gdb")]
             gdb_event: None,
             kvm_vcpu,
-            userfault_channel,
+            userfault_resolved,
         })
     }
 
@@ -259,6 +264,10 @@ impl Vcpu {
     ) -> Result<VcpuHandle, StartThreadedError> {
         let event_sender = self.event_sender.take().expect("vCPU already started");
         let response_receiver = self.response_receiver.take().unwrap();
+        let userfault_resolved = self
+            .userfault_resolved
+            .as_ref()
+            .and_then(|v| v.try_clone().ok());
         let vcpu_thread = thread::Builder::new()
             .name(format!("fc_vcpu {}", self.kvm_vcpu.index))
             .spawn(move || {
@@ -273,6 +282,7 @@ impl Vcpu {
         Ok(VcpuHandle::new(
             event_sender,
             response_receiver,
+            userfault_resolved,
             vcpu_thread,
         ))
     }
@@ -312,6 +322,7 @@ impl Vcpu {
                 // - the other vCPUs won't ever exit out of `KVM_RUN`, but they won't consume CPU.
                 // So we pause vCPU0 and send a signal to the emulation thread to stop the VMM.
                 Ok(VcpuEmulation::Stopped) => return self.exit(FcExitCode::Ok),
+                Ok(VcpuEmulation::Userfault(_)) => unreachable!(),
                 // If the emulation requests a pause lets do this
                 #[cfg(feature = "gdb")]
                 Ok(VcpuEmulation::Paused) => {
@@ -495,6 +506,24 @@ impl Vcpu {
         StateMachine::finish()
     }
 
+    fn handle_userfault(
+        &mut self,
+        userfaultfd_data: UserfaultData,
+    ) -> Result<VcpuEmulation, VcpuError> {
+        self.response_sender
+            .send(VcpuResponse::Userfault(userfaultfd_data))
+            .expect("Failed to send userfault data");
+        self.exit_evt.write(1).expect("Failed to write exit event");
+
+        self.userfault_resolved
+            .as_ref()
+            .expect("userfault resolved eventfd not set")
+            .read()
+            .expect("Failed to read userfault resolved eventfd");
+
+        Ok(VcpuEmulation::Handled)
+    }
+
     /// Runs the vCPU in KVM context and handles the kvm exit reason.
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
@@ -505,7 +534,7 @@ impl Vcpu {
             return Ok(VcpuEmulation::Interrupted);
         }
 
-        match self.kvm_vcpu.fd.run() {
+        let result = match self.kvm_vcpu.fd.run() {
             Err(ref err) if err.errno() == libc::EINTR => {
                 self.kvm_vcpu.fd.set_kvm_immediate_exit(0);
                 // Notify that this KVM_RUN was interrupted.
@@ -522,7 +551,14 @@ impl Vcpu {
                 Ok(VcpuEmulation::Paused)
             }
             emulation_result => handle_kvm_exit(&mut self.kvm_vcpu.peripherals, emulation_result),
-        }
+        };
+
+        let userfault_data = match result {
+            Ok(VcpuEmulation::Userfault(userfault_data)) => userfault_data,
+            _ => return result,
+        };
+
+        self.handle_userfault(userfault_data)
     }
 }
 
@@ -600,6 +636,16 @@ fn handle_kvm_exit(
                     )))
                 }
             },
+            VcpuExit::MemoryFault { flags, gpa, size } => {
+                if flags & KVM_MEMORY_EXIT_FLAG_USERFAULT == 0 {
+                    Err(VcpuError::UnhandledKvmExit(format!(
+                        "flags {:x} gpa {:x} size {:x}",
+                        flags, gpa, size
+                    )))
+                } else {
+                    Ok(VcpuEmulation::Userfault(UserfaultData { flags, gpa, size }))
+                }
+            }
             arch_specific_reason => {
                 // run specific architecture emulation.
                 peripherals.run_arch_emulation(arch_specific_reason)
@@ -663,6 +709,8 @@ pub enum VcpuResponse {
     SavedState(Box<VcpuState>),
     /// Vcpu is in the state where CPU config is dumped.
     DumpedCpuConfig(Box<CpuConfiguration>),
+    /// Vcpu exited due to a userfault
+    Userfault(UserfaultData),
 }
 
 impl fmt::Debug for VcpuResponse {
@@ -676,6 +724,9 @@ impl fmt::Debug for VcpuResponse {
             Error(err) => write!(f, "VcpuResponse::Error({:?})", err),
             NotAllowed(reason) => write!(f, "VcpuResponse::NotAllowed({})", reason),
             DumpedCpuConfig(_) => write!(f, "VcpuResponse::DumpedCpuConfig"),
+            Userfault(userfault_data) => {
+                write!(f, "VcpuResponse::Userfault({:?})", userfault_data)
+            }
         }
     }
 }
@@ -685,6 +736,7 @@ impl fmt::Debug for VcpuResponse {
 pub struct VcpuHandle {
     event_sender: Sender<VcpuEvent>,
     response_receiver: Receiver<VcpuResponse>,
+    userfault_resolved: Option<EventFd>,
     // Rust JoinHandles have to be wrapped in Option if you ever plan on 'join()'ing them.
     // We want to be able to join these threads in tests.
     vcpu_thread: Option<thread::JoinHandle<()>>,
@@ -701,15 +753,19 @@ impl VcpuHandle {
     /// # Arguments
     /// + `event_sender`: [`Sender`] to communicate [`VcpuEvent`] to control the vcpu.
     /// + `response_received`: [`Received`] from which the vcpu's responses can be read.
+    /// + `userfault_resolved`: An optional [`EventFd`] to notify the vcpu that a userfault has been
+    ///   resolved.
     /// + `vcpu_thread`: A [`JoinHandle`] for the vcpu thread.
     pub fn new(
         event_sender: Sender<VcpuEvent>,
         response_receiver: Receiver<VcpuResponse>,
+        userfault_resolved: Option<EventFd>,
         vcpu_thread: thread::JoinHandle<()>,
     ) -> Self {
         Self {
             event_sender,
             response_receiver,
+            userfault_resolved,
             vcpu_thread: Some(vcpu_thread),
         }
     }
@@ -730,6 +786,15 @@ impl VcpuHandle {
             .unwrap()
             .kill(sigrtmin() + VCPU_RTSIG_OFFSET)?;
         Ok(())
+    }
+
+    /// Sends "userfault resolved" event to vCPU.
+    pub fn send_userfault_resolved(&self) {
+        self.userfault_resolved
+            .as_ref()
+            .expect("userfault resolved eventfd not set")
+            .write(1)
+            .expect("Failed to write to userfault resolved eventfd");
     }
 
     /// Returns a reference to the [`Received`] from which the vcpu's responses can be read.
@@ -761,6 +826,8 @@ pub enum VcpuEmulation {
     Interrupted,
     /// Stopped.
     Stopped,
+    /// Userfault
+    Userfault(UserfaultData),
     /// Pause request
     #[cfg(feature = "gdb")]
     Paused,
@@ -911,6 +978,7 @@ pub(crate) mod tests {
             match self {
                 Paused | Resumed | Exited(_) => (),
                 Error(_) | NotAllowed(_) | SavedState(_) | DumpedCpuConfig(_) => (),
+                Userfault(_) => (),
             };
             match (self, other) {
                 (Paused, Paused) | (Resumed, Resumed) => true,
@@ -931,7 +999,7 @@ pub(crate) mod tests {
     pub(crate) fn setup_vcpu(mem_size: usize) -> (Kvm, Vm, Vcpu) {
         let (kvm, mut vm) = setup_vm_with_memory(mem_size);
 
-        let (mut vcpus, _, _) = vm.create_vcpus(1, false).unwrap();
+        let (mut vcpus, _) = vm.create_vcpus(1, false).unwrap();
         let mut vcpu = vcpus.remove(0);
 
         #[cfg(target_arch = "aarch64")]
