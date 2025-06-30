@@ -550,7 +550,7 @@ pub fn guest_memory_from_uffd(
     let mut fds = vec![uffd.as_raw_fd()];
 
     if let Some(gmem) = guest_memfd_fd {
-        mode = RegisterMode::from_bits_retain(UFFDIO_REGISTER_MODE_MINOR);
+        // mode = RegisterMode::from_bits_retain(UFFDIO_REGISTER_MODE_MINOR);
         fds.push(gmem);
         fds.push(
             userfault_bitmap_memfd

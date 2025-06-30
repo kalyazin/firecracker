@@ -391,7 +391,7 @@ impl UffdHandler {
         total_written
     }
 
-    fn populate_via_uffdio_copy(&self, src: *const u8, dst: u64, len: usize) -> bool {
+    fn populate_via_uffdio_copy(&mut self, src: *const u8, dst: u64, len: usize, offset: usize) -> bool {
         unsafe {
             match self.uffd.copy(src.cast(), dst as *mut _, len, true) {
                 // Make sure the UFFD copied some bytes.
@@ -414,6 +414,11 @@ impl UffdHandler {
                 }
             }
         };
+
+        self.userfault_bitmap
+            .as_mut()
+            .unwrap()
+            .reset_addr_range(offset, len);
 
         true
     }
@@ -448,10 +453,12 @@ impl UffdHandler {
         let offset = (region.offset + dst - region.base_host_virt_addr) as usize;
         let src = unsafe { self.backing_buffer.add(offset) };
 
-        match self.guest_memfd {
+        self.populate_via_uffdio_copy(src, dst, len, offset)
+
+        /* match self.guest_memfd {
             Some(_) => self.populate_via_memcpy(src, dst, offset, len),
             None => self.populate_via_uffdio_copy(src, dst, len),
-        }
+        } */
     }
 
     fn zero_out(&mut self, addr: u64) {
