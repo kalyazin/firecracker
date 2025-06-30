@@ -1,0 +1,77 @@
+From 0c185c0800ef989b3ac95aafd884e04220b8c6d9 Mon Sep 17 00:00:00 2001
+From: Nikita Kalyazin <kalyazin@amazon.com>
+Date: Wed, 25 Jun 2025 12:08:55 +0000
+Subject: [PATCH 5/6] UFFD minor support in guest_memfd
+
+---
+ virt/kvm/guest_memfd.c | 38 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index 5abb6d52a375..8c44e4b9f5f8 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -5,6 +5,7 @@
+ #include <linux/pagemap.h>
+ #include <linux/anon_inodes.h>
+ #include <linux/set_memory.h>
++#include <linux/userfaultfd_k.h>
+ 
+ #include "kvm_mm.h"
+ 
+@@ -396,6 +397,12 @@ static vm_fault_t kvm_gmem_fault(struct vm_fault *vmf)
+ 		kvm_gmem_mark_prepared(folio);
+ 	}
+ 
++	if (userfaultfd_minor(vmf->vma)) {
++		folio_unlock(folio);
++		filemap_invalidate_unlock_shared(inode->i_mapping);
++		return handle_userfault(vmf, VM_UFFD_MINOR);
++	}
++
+ 	vmf->page = folio_file_page(folio, vmf->pgoff);
+ 
+ out_folio:
+@@ -410,8 +417,39 @@ static vm_fault_t kvm_gmem_fault(struct vm_fault *vmf)
+ 	return ret;
+ }
+ 
++#ifdef CONFIG_USERFAULTFD
++static int kvm_gmem_uffd_get_folio(struct inode *inode, pgoff_t pgoff,
++				struct folio **foliop)
++{
++	struct folio *folio;
++	folio = kvm_gmem_get_folio(inode, pgoff);
++
++	if (IS_ERR(folio)) {
++		*foliop = NULL;
++		return PTR_ERR(folio);
++	}
++
++	if (!folio_test_uptodate(folio)) {
++		clear_highpage(folio_page(folio, 0));
++		kvm_gmem_mark_prepared(folio);
++	}
++
++	*foliop = folio;
++	return 0;
++}
++
++static const vm_uffd_ops kvm_gmem_uffd_ops = {
++	.uffd_features	= 	VM_UFFD_MINOR,
++	.uffd_ioctls	= 	BIT(_UFFDIO_CONTINUE),
++	.uffd_get_folio	=	kvm_gmem_uffd_get_folio,
++};
++#endif
++
+ static const struct vm_operations_struct kvm_gmem_vm_ops = {
+ 	.fault = kvm_gmem_fault,
++#ifdef CONFIG_USERFAULTFD
++	.userfaultfd_ops = &kvm_gmem_uffd_ops,
++#endif
+ };
+ 
+ static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
+-- 
+2.47.1
+

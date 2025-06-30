@@ -1,0 +1,97 @@
+From 4d99040e1233bee500ca698e88f647d6c5a2dd94 Mon Sep 17 00:00:00 2001
+From: Nikita Kalyazin <kalyazin@amazon.com>
+Date: Fri, 27 Jun 2025 11:19:44 +0000
+Subject: [PATCH 6/6] UFFD missing support in guest_memfd
+
+---
+ virt/kvm/guest_memfd.c | 59 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index 8c44e4b9f5f8..48281472cb3c 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -349,12 +349,20 @@ static bool kvm_gmem_offset_is_shared(struct file *file, pgoff_t index)
+ 
+ static vm_fault_t kvm_gmem_fault(struct vm_fault *vmf)
+ {
++	struct vm_area_struct *vma = vmf ? vmf->vma : NULL;
+ 	struct inode *inode = file_inode(vmf->vma->vm_file);
+ 	struct folio *folio;
+ 	vm_fault_t ret = VM_FAULT_LOCKED;
+ 
+ 	filemap_invalidate_lock_shared(inode->i_mapping);
+ 
++	folio = filemap_get_entry(inode->i_mapping, vmf->pgoff);
++	if (!folio && vma && userfaultfd_missing(vma)) {
++		filemap_invalidate_unlock_shared(inode->i_mapping);
++		return handle_userfault(vmf, VM_UFFD_MISSING);
++	}
++
++	// Comment from Peter: we may leak the folio here
+ 	folio = kvm_gmem_get_folio(inode, vmf->pgoff);
+ 	if (IS_ERR(folio)) {
+ 		int err = PTR_ERR(folio);
+@@ -438,10 +446,57 @@ static int kvm_gmem_uffd_get_folio(struct inode *inode, pgoff_t pgoff,
+ 	return 0;
+ }
+ 
++static int kvm_gmem_mfill_atomic_pte(pmd_t *dst_pmd,
++			   struct vm_area_struct *dst_vma,
++			   unsigned long dst_addr,
++			   unsigned long src_addr,
++			   uffd_flags_t flags,
++			   struct folio **foliop)
++{
++	struct inode *inode = file_inode(dst_vma->vm_file);
++	pgoff_t pgoff = linear_page_index(dst_vma, dst_addr);
++	struct folio *folio;
++	int ret;
++
++	folio = kvm_gmem_get_folio(inode, pgoff);
++	if (IS_ERR(folio)) {
++		ret = PTR_ERR(folio);
++		goto out;
++	}
++
++	folio_unlock(folio);
++
++	if (uffd_flags_mode_is(flags, MFILL_ATOMIC_COPY)) {
++		void *vaddr = kmap_local_folio(folio, 0);
++		ret = copy_from_user(vaddr, (const void __user *)src_addr, PAGE_SIZE);
++		kunmap_local(vaddr);
++		if (unlikely(ret)) {
++			*foliop = folio;
++			ret = -ENOENT;
++			goto out;
++		}
++	} else {		/* ZEROPAGE */
++		clear_user_highpage(&folio->page, dst_addr);
++	}
++
++	kvm_gmem_mark_prepared(folio);
++
++	ret = mfill_atomic_install_pte(dst_pmd, dst_vma, dst_addr,
++				       &folio->page, true, flags);
++
++	if (ret)
++		folio_put(folio);
++out:
++	return ret;
++}
++
+ static const vm_uffd_ops kvm_gmem_uffd_ops = {
+-	.uffd_features	= 	VM_UFFD_MINOR,
+-	.uffd_ioctls	= 	BIT(_UFFDIO_CONTINUE),
++	.uffd_features	= 	VM_UFFD_MISSING | VM_UFFD_MINOR,
++	.uffd_ioctls	= 	BIT(_UFFDIO_COPY) |
++				BIT(_UFFDIO_ZEROPAGE) |
++				BIT(_UFFDIO_CONTINUE),
+ 	.uffd_get_folio	=	kvm_gmem_uffd_get_folio,
++	.uffd_copy	=	kvm_gmem_mfill_atomic_pte,
+ };
+ #endif
+ 
+-- 
+2.47.1
+

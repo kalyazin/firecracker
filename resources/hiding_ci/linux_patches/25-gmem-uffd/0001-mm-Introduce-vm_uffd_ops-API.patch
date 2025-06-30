@@ -1,0 +1,147 @@
+From e13aefacd46cfbca8ffdc1a63b5d164da4c31e25 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Fri, 20 Jun 2025 15:03:39 -0400
+Subject: [PATCH 1/6] mm: Introduce vm_uffd_ops API
+
+Introduce a generic userfaultfd API for vm_operations_struct, so that one
+vma, especially when as a module, can support userfaults without modifying
+the core files.  More importantly, when the module can be compiled out of
+the kernel.
+
+So, instead of having core mm referencing modules that may not ever exist,
+we need to have modules opt-in on core mm hooks instead.
+
+After this API applied, if a module wants to support userfaultfd, the
+module should only need to touch its own file and properly define
+vm_uffd_ops, instead of changing anything in core mm.
+
+Note that such API will not work for anonymous. Core mm will process
+anonymous memory separately for userfault operations like before.
+
+This patch only introduces the API alone so that we can start to move
+existing users over but without breaking them.
+
+Currently the uffd_copy() API is almost designed to be the simplistic with
+minimum mm changes to move over to the API.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+---
+ include/linux/mm.h            | 71 +++++++++++++++++++++++++++++++++++
+ include/linux/userfaultfd_k.h | 12 ------
+ 2 files changed, 71 insertions(+), 12 deletions(-)
+
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 8483e09aeb2c..4229707f5ca5 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -603,6 +603,70 @@ struct vm_fault {
+ 					 */
+ };
+ 
++#ifdef CONFIG_USERFAULTFD
++/* A combined operation mode + behavior flags. */
++typedef unsigned int __bitwise uffd_flags_t;
++
++enum mfill_atomic_mode {
++	MFILL_ATOMIC_COPY,
++	MFILL_ATOMIC_ZEROPAGE,
++	MFILL_ATOMIC_CONTINUE,
++	MFILL_ATOMIC_POISON,
++	NR_MFILL_ATOMIC_MODES,
++};
++
++/* VMA userfaultfd operations */
++typedef struct {
++	/**
++	 * @uffd_features: features supported in bitmask.
++	 *
++	 * When the ops is defined, the driver must set non-zero features
++	 * to be a subset (or all) of: VM_UFFD_MISSING|WP|MINOR.
++	 */
++	unsigned long uffd_features;
++	/**
++	 * @uffd_ioctls: ioctls supported in bitmask.
++	 *
++	 * Userfaultfd ioctls supported by the module.  Below will always
++	 * be supported by default whenever a module provides vm_uffd_ops:
++	 *
++	 *   _UFFDIO_API, _UFFDIO_REGISTER, _UFFDIO_UNREGISTER, _UFFDIO_WAKE
++	 *
++	 * The module needs to provide all the rest optionally supported
++	 * ioctls.  For example, when VM_UFFD_MISSING was supported,
++	 * _UFFDIO_COPY must be supported as ioctl, while _UFFDIO_ZEROPAGE
++	 * is optional.
++	 */
++	unsigned long uffd_ioctls;
++	/**
++	 * uffd_get_folio: Handler to resolve UFFDIO_CONTINUE request.
++	 *
++	 * @inode: the inode for folio lookup
++	 * @pgoff: the pgoff of the folio
++	 * @folio: returned folio pointer
++	 *
++	 * Return: zero if succeeded, negative for errors.
++	 */
++	int (*uffd_get_folio)(struct inode *inode, pgoff_t pgoff,
++			      struct folio **folio);
++	/**
++	 * uffd_copy: Handler to resolve UFFDIO_COPY|ZEROPAGE request.
++	 *
++	 * @dst_pmd: target pmd to resolve page fault
++	 * @dst_vma: target vma
++	 * @dst_addr: target virtual address
++	 * @src_addr: source address to copy from
++	 * @flags: userfaultfd request flags
++	 * @foliop: previously allocated folio
++	 *
++	 * Return: zero if succeeded, negative for errors.
++	 */
++	int (*uffd_copy)(pmd_t *dst_pmd, struct vm_area_struct *dst_vma,
++			 unsigned long dst_addr, unsigned long src_addr,
++			 uffd_flags_t flags, struct folio **foliop);
++} vm_uffd_ops;
++#endif
++
+ /*
+  * These are the virtual MM functions - opening of an area, closing and
+  * unmapping it (needed to keep files on disk up-to-date etc), pointer
+@@ -680,6 +744,13 @@ struct vm_operations_struct {
+ 	 */
+ 	struct page *(*find_special_page)(struct vm_area_struct *vma,
+ 					  unsigned long addr);
++#ifdef CONFIG_USERFAULTFD
++	/*
++	 * Userfaultfd related ops.  Modules need to define this to support
++	 * userfaultfd.
++	 */
++	const vm_uffd_ops *userfaultfd_ops;
++#endif
+ };
+ 
+ #ifdef CONFIG_NUMA_BALANCING
+diff --git a/include/linux/userfaultfd_k.h b/include/linux/userfaultfd_k.h
+index 75342022d144..9bcde1ea53e6 100644
+--- a/include/linux/userfaultfd_k.h
++++ b/include/linux/userfaultfd_k.h
+@@ -84,18 +84,6 @@ struct userfaultfd_ctx {
+ 
+ extern vm_fault_t handle_userfault(struct vm_fault *vmf, unsigned long reason);
+ 
+-/* A combined operation mode + behavior flags. */
+-typedef unsigned int __bitwise uffd_flags_t;
+-
+-/* Mutually exclusive modes of operation. */
+-enum mfill_atomic_mode {
+-	MFILL_ATOMIC_COPY,
+-	MFILL_ATOMIC_ZEROPAGE,
+-	MFILL_ATOMIC_CONTINUE,
+-	MFILL_ATOMIC_POISON,
+-	NR_MFILL_ATOMIC_MODES,
+-};
+-
+ #define MFILL_ATOMIC_MODE_BITS (const_ilog2(NR_MFILL_ATOMIC_MODES - 1) + 1)
+ #define MFILL_ATOMIC_BIT(nr) BIT(MFILL_ATOMIC_MODE_BITS + (nr))
+ #define MFILL_ATOMIC_FLAG(nr) ((__force uffd_flags_t) MFILL_ATOMIC_BIT(nr))
+-- 
+2.47.1
+
