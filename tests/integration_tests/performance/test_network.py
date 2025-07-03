@@ -49,6 +49,7 @@ def network_microvm(request, microvm_factory, guest_kernel_acpi, rootfs):
     vm.spawn(log_level="Info", emit_metrics=True)
     vm.basic_config(vcpu_count=guest_vcpus, mem_size_mib=guest_mem_mib)
     vm.add_net_iface()
+    vm.add_net_iface()
     vm.start()
     vm.pin_threads(0)
 
@@ -57,12 +58,14 @@ def network_microvm(request, microvm_factory, guest_kernel_acpi, rootfs):
 
 @pytest.mark.nonci
 @pytest.mark.parametrize("network_microvm", [1], indirect=True)
-def test_network_latency(network_microvm, metrics):
+@pytest.mark.timeout(120000)
+@pytest.mark.parametrize("n", [1])
+def test_network_latency(network_microvm, metrics, n):
     """
     Test network latency by sending pings from the guest to the host.
     """
 
-    rounds = 15
+    rounds = 100000
     request_per_round = 30
     delay = 0.0
 
@@ -74,11 +77,11 @@ def test_network_latency(network_microvm, metrics):
     )
 
     samples = []
-    host_ip = network_microvm.iface["eth0"]["iface"].host_ip
+    host_ip = network_microvm.iface["eth1"]["iface"].host_ip
 
     for _ in range(rounds):
         _, ping_output, _ = network_microvm.ssh.check_output(
-            f"ping -c {request_per_round} -i {delay} {host_ip}"
+            f"ping -I eth1 -c {request_per_round} -i {delay} {host_ip}"
         )
 
         samples.extend(consume_ping_output(ping_output, request_per_round))
