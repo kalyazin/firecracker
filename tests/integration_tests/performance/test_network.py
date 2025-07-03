@@ -33,6 +33,9 @@ def consume_ping_output(ping_putput, request_per_round):
     pattern_time = ".+ bytes from .+: icmp_seq=.+ ttl=.+ time=(.+) ms"
     for seq in seqs:
         time = re.findall(pattern_time, seq)
+        if (len(time)) != 1:
+            print("KAIN: error, len = ", len(time))
+            time.sleep(10 * 60)
         assert len(time) == 1
         yield float(time[0])
 
