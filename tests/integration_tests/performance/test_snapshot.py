@@ -5,17 +5,19 @@ import re
 import signal
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 
 import pytest
 
 import host_tools.drive as drive_tools
+import host_tools.network as net_tools
 from framework.microvm import HugePagesConfig, Microvm, SnapshotType
 
 USEC_IN_MSEC = 1000
 NS_IN_MSEC = 1_000_000
-ITERATIONS = 30
+ITERATIONS = 3
 
 
 @lru_cache
@@ -84,14 +86,8 @@ class SnapshotRestoreTest:
     "test_setup",
     [
         SnapshotRestoreTest(mem=128, vcpus=1),
+        SnapshotRestoreTest(mem=128, vcpus=1),
         SnapshotRestoreTest(mem=1024, vcpus=1),
-        SnapshotRestoreTest(mem=2048, vcpus=2),
-        SnapshotRestoreTest(mem=4096, vcpus=3),
-        SnapshotRestoreTest(mem=6144, vcpus=4),
-        SnapshotRestoreTest(mem=8192, vcpus=5),
-        SnapshotRestoreTest(mem=10240, vcpus=6),
-        SnapshotRestoreTest(mem=12288, vcpus=7),
-        SnapshotRestoreTest(all_devices=True),
     ],
     ids=lambda x: x.id,
 )

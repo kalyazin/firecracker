@@ -1167,6 +1167,7 @@ class MicroVMFactory:
         """Build a microvm"""
         kwargs = self.kwargs | kwargs
         microvm_id = kwargs.pop("microvm_id", str(uuid.uuid4()))
+        print(f"KAIN: Building microvm {microvm_id} with {kwargs}")
         vm = Microvm(
             microvm_id=microvm_id,
             fc_binary_path=kwargs.pop("fc_binary_path", self.fc_binary_path),
