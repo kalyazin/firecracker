@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import pytest
+import time
 
 from framework.utils_iperf import IPerf3Test, emit_iperf3_metrics
 
