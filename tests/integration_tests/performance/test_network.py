@@ -36,7 +36,7 @@ def consume_ping_output(ping_putput, request_per_round):
         time__ = re.findall(pattern_time, seq)
         if (len(time__)) != 1:
             print("KAIN: error, len = ", len(time__))
-            time.sleep(10 * 60)
+            time.sleep(6000)
         assert len(time__) == 1
         yield float(time__[0])
 
