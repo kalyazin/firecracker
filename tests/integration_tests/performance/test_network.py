@@ -33,12 +33,12 @@ def consume_ping_output(ping_putput, request_per_round):
     seqs = output[1 : request_per_round + 1]
     pattern_time = ".+ bytes from .+: icmp_seq=.+ ttl=.+ time=(.+) ms"
     for seq in seqs:
-        time = re.findall(pattern_time, seq)
-        if (len(time)) != 1:
-            print("KAIN: error, len = ", len(time))
+        time__ = re.findall(pattern_time, seq)
+        if (len(time__)) != 1:
+            print("KAIN: error, len = ", len(time__))
             time.sleep(10 * 60)
-        assert len(time) == 1
-        yield float(time[0])
+        assert len(time__) == 1
+        yield float(time__[0])
 
 
 @pytest.fixture
