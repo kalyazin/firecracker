@@ -39,7 +39,7 @@ def consume_ping_output(ping_putput, request_per_round, vm):
             print("KAIN: error, len = ", len(time__))
             out = utils.check_output(f"{vm.netns.cmd_prefix()} ip -s link show tap1")
             print("KAIN: host out = ", out)
-            _, out, _ = network_microvm.ssh.check_output(
+            _, out, _ = vm.ssh.check_output(
                 f"ip -s link show eth1"
             )
             print("KAIN: guest out = ", out)
