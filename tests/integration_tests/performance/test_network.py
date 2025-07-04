@@ -64,6 +64,8 @@ def network_microvm(request, microvm_factory, guest_kernel_acpi, rootfs):
     vm.start()
     vm.pin_threads(0)
 
+    vm.ssh.scp_put("/firecracker/ping", "/tmp/ping")
+
     return vm
 
 
@@ -92,7 +94,7 @@ def test_network_latency(network_microvm, metrics, n):
 
     for _ in range(rounds):
         _, ping_output, _ = network_microvm.ssh.check_output(
-            f"ping -I eth1 -c {request_per_round} -i {delay} {host_ip}"
+            f"/tmp/ping -I eth1 -c {request_per_round} -i {delay} {host_ip}"
         )
 
         samples.extend(consume_ping_output(ping_output, request_per_round, network_microvm))
