@@ -42,6 +42,7 @@ def consume_ping_output(ping_putput, request_per_round, vm):
             _, out, _ = network_microvm.ssh.check_output(
                 f"ip -s link show eth1"
             )
+            print("KAIN: guest out = ", out)
             time.sleep(2 * 60)
         assert len(time__) == 1
         yield float(time__[0])
