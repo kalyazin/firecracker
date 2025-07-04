@@ -37,7 +37,8 @@ def consume_ping_output(ping_putput, request_per_round, vm):
         time__ = re.findall(pattern_time, seq)
         if (len(time__)) != 1:
             print("KAIN: error, len = ", len(time__))
-            out = utils.check_output(f"KAIN: {vm.netns.cmd_prefix()} ip -s link show tap1")
+            out = utils.check_output(f"{vm.netns.cmd_prefix()} ip -s link show tap1")
+            print("KAIN: out = ", out)
             time.sleep(600)
         assert len(time__) == 1
         yield float(time__[0])
