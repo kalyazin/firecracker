@@ -10,9 +10,10 @@ import pytest
 import time
 
 from framework.utils_iperf import IPerf3Test, emit_iperf3_metrics
+from framework import utils
 
 
-def consume_ping_output(ping_putput, request_per_round):
+def consume_ping_output(ping_putput, request_per_round, vm):
     """Consume ping output.
 
     Output example:
@@ -36,7 +37,8 @@ def consume_ping_output(ping_putput, request_per_round):
         time__ = re.findall(pattern_time, seq)
         if (len(time__)) != 1:
             print("KAIN: error, len = ", len(time__))
-            time.sleep(6000)
+            out = utils.check_output(f"KAIN: {vm.netns.cmd_prefix()} ip -s link show tap1")
+            time.sleep(600)
         assert len(time__) == 1
         yield float(time__[0])
 
@@ -88,7 +90,7 @@ def test_network_latency(network_microvm, metrics, n):
             f"ping -I eth1 -c {request_per_round} -i {delay} {host_ip}"
         )
 
-        samples.extend(consume_ping_output(ping_output, request_per_round))
+        samples.extend(consume_ping_output(ping_output, request_per_round, network_microvm))
 
     for sample in samples:
         metrics.put_metric("ping_latency", sample, "Milliseconds")
