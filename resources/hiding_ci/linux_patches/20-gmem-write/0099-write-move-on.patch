@@ -1,0 +1,25 @@
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index 202b12dc4b6f..81ce4a133a71 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -504,8 +504,10 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 		if (folio_test_uptodate(folio)) {
+ 			folio_unlock(folio);
+ 			folio_put(folio);
+-			ret = -ENOSPC;
+-			goto out;
++			// print a warning that page at index x of start s and end e is arleady populated
++			WARN(1, "kvm_gmem: page %lx of start %lx and end %lx is already up-to-date, not writing to it",
++			     index, start, end);
++			goto cont;
+ 		}
+ 
+ 		folio_unlock(folio);
+@@ -522,6 +524,7 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 		kvm_gmem_mark_prepared(folio);
+ 		folio_put(folio);
+ 
++cont:
+ 		index = folio_next_index(folio);
+ 		*offset += PAGE_SIZE;
+ 	}
