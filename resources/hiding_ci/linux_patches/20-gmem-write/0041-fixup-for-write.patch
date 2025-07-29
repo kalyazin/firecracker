@@ -1,0 +1,60 @@
+From 09b352d435a1ee671d10bbb1558192ef37800f8f Mon Sep 17 00:00:00 2001
+From: Nikita Kalyazin <kalyazin@amazon.com>
+Date: Tue, 29 Jul 2025 17:18:26 +0000
+Subject: [PATCH] fixup for write
+
+Hold the folio lock when copying data from user.
+This is to avoid a race with the fault handler where it finds a folio in
+the cache and attempts to clear it while a write is still working on it.
+
+Signed-off-by: Nikita Kalyazin <kalyazin@amazon.com>
+---
+ virt/kvm/guest_memfd.c | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index 0226086a1a01..61a538f10dc4 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -424,8 +424,6 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 	start = *offset >> PAGE_SHIFT;
+ 	end = (*offset + count) >> PAGE_SHIFT;
+ 
+-	filemap_invalidate_lock_shared(file->f_mapping);
+-
+ 	for (index = start; index < end; ) {
+ 		struct folio *folio;
+ 		void *vaddr;
+@@ -464,18 +462,18 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 			goto out;
+ 		}
+ 
+-		folio_unlock(folio);
+-
+ 		vaddr = kmap_local_folio(folio, 0);
+ 		ret = copy_from_user(vaddr, buf + buf_offset, PAGE_SIZE);
+ 		kunmap_local(vaddr);
+ 		if (ret) {
+ 			ret = -EINVAL;
++			folio_unlock(folio);
+ 			folio_put(folio);
+ 			goto out;
+ 		}
+ 
+ 		kvm_gmem_mark_prepared(folio);
++		folio_unlock(folio);
+ 		folio_put(folio);
+ 
+ 		index = folio_next_index(folio);
+@@ -483,8 +481,6 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 	}
+ 
+ out:
+-	filemap_invalidate_unlock_shared(file->f_mapping);
+-
+ 	return ret && start == (*offset >> PAGE_SHIFT) ?
+ 		ret : *offset - (start << PAGE_SHIFT);
+ }
+-- 
+2.50.1
+
