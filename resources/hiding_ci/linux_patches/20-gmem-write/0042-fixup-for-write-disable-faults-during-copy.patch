@@ -1,0 +1,58 @@
+From d3bf2f5e0bcd623a0b4e943f2f137a76dc568658 Mon Sep 17 00:00:00 2001
+From: Nikita Kalyazin <kalyazin@amazon.com>
+Date: Tue, 29 Jul 2025 17:29:02 +0000
+Subject: [PATCH] fixup for write: disable faults during copy
+
+This is to avoid deadlocks when user buffer fault may be handled by
+userspace.
+---
+ virt/kvm/guest_memfd.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index 61a538f10dc4..2ecb884c7feb 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -424,6 +424,8 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 	start = *offset >> PAGE_SHIFT;
+ 	end = (*offset + count) >> PAGE_SHIFT;
+ 
++	filemap_invalidate_lock_shared(file->f_mapping);
++
+ 	for (index = start; index < end; ) {
+ 		struct folio *folio;
+ 		void *vaddr;
+@@ -434,6 +436,11 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 			goto out;
+ 		}
+ 
++		if (fault_in_readable(buf + buf_offset, PAGE_SIZE)) {
++			ret = -EFAULT;
++			goto out;
++		}
++
+ 		folio = kvm_gmem_get_folio(file_inode(file), index);
+ 		if (IS_ERR(folio)) {
+ 			ret = -EFAULT;
+@@ -463,7 +470,9 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 		}
+ 
+ 		vaddr = kmap_local_folio(folio, 0);
++		pagefault_disable();
+ 		ret = copy_from_user(vaddr, buf + buf_offset, PAGE_SIZE);
++		pagefault_enable();
+ 		kunmap_local(vaddr);
+ 		if (ret) {
+ 			ret = -EINVAL;
+@@ -481,6 +490,8 @@ static ssize_t kvm_kmem_gmem_write(struct file *file, const char __user *buf,
+ 	}
+ 
+ out:
++	filemap_invalidate_unlock_shared(file->f_mapping);
++
+ 	return ret && start == (*offset >> PAGE_SHIFT) ?
+ 		ret : *offset - (start << PAGE_SHIFT);
+ }
+-- 
+2.50.1
+
