@@ -447,7 +447,7 @@ if (
     global_props.host_linux_version_metrics == "next"
     and global_props.instance != "m6g.metal"
 ):
-    secret_free_test_cases.append(True)
+    secret_free_test_cases = [True]
 
 
 @pytest.fixture(params=secret_free_test_cases)
