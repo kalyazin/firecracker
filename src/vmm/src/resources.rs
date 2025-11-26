@@ -539,6 +539,7 @@ impl VmResources {
         &self,
         regions: &[(GuestAddress, usize)],
         guest_memfd: Option<Arc<File>>,
+        guest_memfd_offset: Option<u64>,
     ) -> Result<Vec<GuestRegionMmap>, MemoryError> {
         // Page faults are more expensive for shared memory mapping, including  memfd.
         // For this reason, we only back guest memory with a memfd
@@ -552,6 +553,7 @@ impl VmResources {
         match guest_memfd {
             Some(file) => memory::file_shared(
                 file,
+                guest_memfd_offset.expect("guest_memfd_offset is not set"),
                 regions.iter().copied(),
                 self.machine_config.track_dirty_pages,
                 self.machine_config.huge_pages,
@@ -560,13 +562,14 @@ impl VmResources {
                 if self.vhost_user_devices_used() {
                     let memfd = Arc::new(
                         create_memfd(
-                            self.memory_size() as u64,
+                            regions.iter().map(|&(_, size)| size as u64).sum(),
                             self.machine_config.huge_pages.into(),
                         )?
                         .into_file(),
                     );
                     memory::file_shared(
                         memfd,
+                        0,
                         regions.iter().copied(),
                         self.machine_config.track_dirty_pages,
                         self.machine_config.huge_pages,
@@ -588,7 +591,8 @@ impl VmResources {
         guest_memfd: Option<Arc<File>>,
     ) -> Result<Vec<GuestRegionMmap>, MemoryError> {
         let regions = crate::arch::arch_memory_regions(self.memory_size());
-        self.allocate_memory_regions(&regions, guest_memfd)
+        let guest_memfd_offset = guest_memfd.as_ref().and(Some(0));
+        self.allocate_memory_regions(&regions, guest_memfd, guest_memfd_offset)
     }
 
     /// Allocates a single guest memory region.
@@ -597,9 +601,10 @@ impl VmResources {
         start: GuestAddress,
         size: usize,
         guest_memfd: Option<Arc<File>>,
+        guest_memfd_offset: Option<u64>,
     ) -> Result<GuestRegionMmap, MemoryError> {
         Ok(self
-            .allocate_memory_regions(&[(start, size)], guest_memfd)?
+            .allocate_memory_regions(&[(start, size)], guest_memfd, guest_memfd_offset)?
             .pop()
             .unwrap())
     }

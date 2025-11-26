@@ -211,11 +211,17 @@ pub fn build_microvm_for_boot(
     // before they clone the GuestMemoryMmap object
     let virtio_mem_addr = if let Some(memory_hotplug) = &vm_resources.memory_hotplug {
         let addr = allocate_virtio_mem_address(&vm, memory_hotplug.total_size_mib)?;
+        let guest_memfd_offset = if guest_memfd.is_some() {
+            Some(vm_resources.machine_config.mem_size_mib as u64)
+        } else {
+            None
+        };
         let hotplug_memory_region = vm_resources
             .allocate_memory_region(
                 addr,
                 mib_to_bytes(memory_hotplug.total_size_mib),
                 guest_memfd,
+                guest_memfd_offset,
             )
             .map_err(StartMicrovmError::GuestMemory)?;
         vm.register_hotpluggable_memory_region(

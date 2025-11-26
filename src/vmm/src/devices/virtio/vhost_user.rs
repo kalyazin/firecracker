@@ -486,6 +486,7 @@ pub(crate) mod tests {
                 regions.iter().copied(),
                 libc::MAP_PRIVATE,
                 Some(Arc::new(file)),
+                0,
                 false,
             )
             .unwrap()

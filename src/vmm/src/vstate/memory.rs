@@ -622,9 +622,10 @@ pub fn create(
     regions: impl Iterator<Item = (GuestAddress, usize)>,
     mmap_flags: libc::c_int,
     file: Option<Arc<File>>,
+    file_offset: u64,
     track_dirty_pages: bool,
 ) -> Result<Vec<GuestRegionMmap>, MemoryError> {
-    let mut offset = 0;
+    let mut offset = file_offset;
     regions
         .map(|(start, size)| {
             let mut builder = MmapRegionBuilder::new_with_bitmap(
@@ -660,6 +661,7 @@ pub fn create(
 /// Creates a GuestMemoryMmap with `size` in MiB backed by a memfd.
 pub fn file_shared(
     file: Arc<File>,
+    file_offset: u64,
     regions: impl Iterator<Item = (GuestAddress, usize)>,
     track_dirty_pages: bool,
     huge_pages: HugePageConfig,
@@ -668,6 +670,7 @@ pub fn file_shared(
         regions,
         libc::MAP_SHARED | huge_pages.mmap_flags(),
         Some(file),
+        file_offset,
         track_dirty_pages,
     )
 }
@@ -682,6 +685,7 @@ pub fn anonymous(
         regions,
         libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | huge_pages.mmap_flags(),
         None,
+        0,
         track_dirty_pages,
     )
 }
@@ -710,6 +714,7 @@ pub fn file_private(
         regions.into_iter(),
         libc::MAP_PRIVATE,
         Some(file),
+        0,
         track_dirty_pages,
     )
 }
