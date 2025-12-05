@@ -519,7 +519,7 @@ fn memfd_to_slice(memfd: &mut Option<File>) -> Result<Option<&mut [u8]>, MemoryE
     }
 }
 // TODO: take it from kvm-bindings when userfault support is merged upstream
-const KVM_CAP_USERFAULT: u32 = 245;
+const KVM_CAP_USERFAULT: u32 = 247;
 
 /// Builds and starts a microVM based on the provided MicrovmState.
 ///
