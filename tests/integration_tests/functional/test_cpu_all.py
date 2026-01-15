@@ -10,6 +10,7 @@ are operating identically, except for the expected differences.
 """
 
 import pytest
+import time
 
 # Use the maximum number of vCPUs supported by Firecracker
 MAX_VCPUS = 32
@@ -22,6 +23,8 @@ def test_all_vcpus_online(uvm_any):
         uvm_any.ssh.check_output("cat /sys/devices/system/cpu/online").stdout.strip()
         == f"0-{uvm_any.vcpus_count - 1}"
     )
+
+    time.sleep(5)
 
 
 @pytest.mark.parametrize("vcpu_count", [MAX_VCPUS])

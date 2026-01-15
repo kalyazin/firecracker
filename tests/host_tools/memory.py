@@ -14,10 +14,10 @@ from framework.properties import global_props
 class MemoryUsageExceededError(Exception):
     """A custom exception containing details on excessive memory usage."""
 
-    def __init__(self, usage, threshold, *args):
+    def __init__(self, usage, threshold, _exceeded, maxim, *args):
         """Compose the error message containing the memory consumption."""
         super().__init__(
-            f"Memory usage ({usage / (1 << 20):.2f} MiB) exceeded maximum threshold "
+            f"Memory usage ({usage / (1 << 20):.2f} MiB) exceeded maximum threshold {maxim=} "
             f"({threshold / (1 << 20)} MiB)",
             *args,
         )
@@ -49,6 +49,7 @@ class MemoryMonitor(Thread):
         self._vm = vm
         self.threshold = threshold
         self._exceeded = None
+        self._max = 0
         self._period_s = period_s
         self._should_stop = False
         self._current_rss = 0
@@ -90,7 +91,8 @@ class MemoryMonitor(Thread):
             self._current_rss = mem_total
             if mem_total > self.threshold:
                 self._exceeded = ps
-                return
+                self._max = max(self._max, mem_total)
+                # return
 
             time.sleep(self._period_s)
 
@@ -151,7 +153,7 @@ class MemoryMonitor(Thread):
         """Check that there are no samples over the threshold."""
         if self._exceeded is not None:
             raise MemoryUsageExceededError(
-                self._current_rss, self.threshold, self._exceeded
+                self._current_rss, self.threshold, self._exceeded, self._max
             )
 
     @property
