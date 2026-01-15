@@ -255,7 +255,7 @@ class Microvm:
         self.monitors = []
         self.memory_monitor = None
         if monitor_memory:
-            self.memory_monitor = MemoryMonitor(self)
+            self.memory_monitor = MemoryMonitor(self, threshold=0, period_s=0.001)
             self.monitors.append(self.memory_monitor)
 
         self.api = None
