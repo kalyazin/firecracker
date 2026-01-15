@@ -255,9 +255,7 @@ class Microvm:
         self.monitors = []
         self.memory_monitor = None
         if monitor_memory:
-            # Increased threshold from 5 MiB to 6 MiB to account for bitcode migration
-            # which slightly increased memory usage compared to bincode
-            self.memory_monitor = MemoryMonitor(self, threshold=6 << 20)
+            self.memory_monitor = MemoryMonitor(self)
             self.monitors.append(self.memory_monitor)
 
         self.api = None
