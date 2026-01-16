@@ -841,8 +841,8 @@ class Microvm:
         if cpu_template is not None:
             self.set_cpu_template(cpu_template)
 
-        if self.memory_monitor:
-            self.memory_monitor.start()
+        # if self.memory_monitor:
+        #    self.memory_monitor.start()
 
         if boot_args is not None:
             self.boot_args = boot_args
