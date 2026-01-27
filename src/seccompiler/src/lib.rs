@@ -52,6 +52,8 @@ pub enum CompilationError {
     OutputCreate(std::io::Error),
     /// Cannot serialize bfp: {0}
     BitcodeSerialize(bitcode::Error),
+    /// Serialized BPF exceeds size limit of {0} bytes
+    SizeLimitExceeded(usize),
 }
 
 pub fn compile_bpf(
@@ -186,9 +188,9 @@ pub fn compile_bpf(
 
         // Check size limit to prevent DOS attacks
         if encoded.len() > DESERIALIZATION_BYTES_LIMIT {
-            // Create a simple error by trying to deserialize invalid data
-            let error = bitcode::deserialize::<()>(&[0xFF]).unwrap_err();
-            return Err(CompilationError::BitcodeSerialize(error));
+            return Err(CompilationError::SizeLimitExceeded(
+                DESERIALIZATION_BYTES_LIMIT,
+            ));
         }
 
         std::io::Write::write_all(&mut output_file, &encoded)
