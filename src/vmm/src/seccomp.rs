@@ -26,7 +26,15 @@ pub type BpfProgramRef<'a> = &'a [BpfInstruction];
 pub type BpfThreadMap = HashMap<String, Arc<BpfProgram>>;
 
 /// Binary filter deserialization errors.
-pub type DeserializationError = bitcode::Error;
+#[derive(Debug, thiserror::Error, displaydoc::Display)]
+pub enum DeserializationError {
+    /// Failed to read input: {0}
+    InputRead(std::io::Error),
+    /// Input size {0} exceeds limit of {1} bytes
+    SizeLimitExceeded(usize, usize),
+    /// Bitcode deserialization failed: {0}
+    Bitcode(#[from] bitcode::Error),
+}
 
 /// Retrieve empty seccomp filters.
 pub fn get_empty_filters() -> BpfThreadMap {
@@ -40,15 +48,16 @@ pub fn get_empty_filters() -> BpfThreadMap {
 /// Deserialize binary with bpf filters
 pub fn deserialize_binary<R: Read>(mut reader: R) -> Result<BpfThreadMap, DeserializationError> {
     let mut buf = Vec::new();
-    reader.read_to_end(&mut buf).map_err(|_| {
-        // Create a simple error - we'll just use a deserialization error
-        bitcode::deserialize::<()>(&[0xFF]).unwrap_err()
-    })?;
+    reader
+        .read_to_end(&mut buf)
+        .map_err(DeserializationError::InputRead)?;
 
     // Check size limit to prevent DOS attacks
     if buf.len() > DESERIALIZATION_BYTES_LIMIT {
-        // Create a simple error by trying to deserialize invalid data
-        return Err(bitcode::deserialize::<()>(&[0xFF]).unwrap_err());
+        return Err(DeserializationError::SizeLimitExceeded(
+            buf.len(),
+            DESERIALIZATION_BYTES_LIMIT,
+        ));
     }
 
     let result: HashMap<String, _> = bitcode::deserialize(&buf)?;
