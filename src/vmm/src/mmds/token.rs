@@ -20,7 +20,7 @@ pub const PAYLOAD_LEN: usize = std::mem::size_of::<u64>();
 pub const TAG_LEN: usize = 16;
 
 /// Maximum size in bytes for token deserialization to prevent DOS attacks.
-/// The Token struct contains fixed-size arrays (IV_LEN + PAYLOAD_LEN + TAG_LEN = 40 bytes)
+/// The Token struct contains fixed-size arrays (IV_LEN + PAYLOAD_LEN + TAG_LEN = 36 bytes)
 /// plus bitcode serialization overhead. This limit provides a safe margin.
 const TOKEN_DESERIALIZATION_BYTES_LIMIT: usize = 100;
 
