@@ -19,6 +19,11 @@ pub const PAYLOAD_LEN: usize = std::mem::size_of::<u64>();
 /// Length of encryption tag.
 pub const TAG_LEN: usize = 16;
 
+/// Maximum size in bytes for token deserialization to prevent DOS attacks.
+/// The Token struct contains fixed-size arrays (IV_LEN + PAYLOAD_LEN + TAG_LEN = 40 bytes)
+/// plus bitcode serialization overhead. This limit provides a safe margin.
+const TOKEN_DESERIALIZATION_BYTES_LIMIT: usize = 100;
+
 /// Constant to convert seconds to milliseconds.
 pub const MILLISECONDS_PER_SECOND: u64 = 1_000;
 
@@ -269,6 +274,11 @@ impl Token {
         let token_bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded_token)
             .map_err(|_| MmdsTokenError::ExpiryExtraction)?;
+
+        // Check size limit to prevent DOS attacks
+        if token_bytes.len() > TOKEN_DESERIALIZATION_BYTES_LIMIT {
+            return Err(MmdsTokenError::ExpiryExtraction);
+        }
 
         let token: Token =
             bitcode::deserialize(&token_bytes).map_err(|_| MmdsTokenError::ExpiryExtraction)?;
