@@ -43,6 +43,11 @@ const SNAPSHOT_MAGIC_ID: u64 = 0x0710_1984_8664_0000u64;
 #[cfg(target_arch = "aarch64")]
 const SNAPSHOT_MAGIC_ID: u64 = 0x0710_1984_AAAA_0000u64;
 
+/// Maximum size in bytes for snapshot deserialization to prevent DOS attacks.
+/// Snapshots contain VM state which can be large, but we set a reasonable upper bound.
+/// This limit is 100MB which should be sufficient for any legitimate snapshot.
+const SNAPSHOT_DESERIALIZATION_BYTES_LIMIT: usize = 100_000_000;
+
 /// Error definitions for the Snapshot API.
 #[derive(Debug, thiserror::Error, displaydoc::Display)]
 pub enum SnapshotError {
@@ -56,6 +61,8 @@ pub enum SnapshotError {
     Bitcode(#[from] bitcode::Error),
     /// IO Error: {0}
     Io(#[from] std::io::Error),
+    /// Snapshot size exceeds limit of {0} bytes
+    SizeLimitExceeded(usize),
 }
 
 fn serialize<S: Serialize, W: Write>(data: &S, write: &mut W) -> Result<(), SnapshotError> {
@@ -77,6 +84,13 @@ struct SnapshotHdr {
 pub fn get_format_version<R: Read>(reader: &mut R) -> Result<Version, SnapshotError> {
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
+
+    // Check size limit to prevent DOS attacks
+    if buf.len() > SNAPSHOT_DESERIALIZATION_BYTES_LIMIT {
+        return Err(SnapshotError::SizeLimitExceeded(
+            SNAPSHOT_DESERIALIZATION_BYTES_LIMIT,
+        ));
+    }
 
     // The last 8 bytes are the CRC, so we need to separate them for deserialization
     if buf.len() < 8 {
@@ -136,6 +150,13 @@ impl<Data> Snapshot<Data> {
 
 impl<Data: DeserializeOwned> Snapshot<Data> {
     pub(crate) fn load_without_crc_check(buf: &[u8]) -> Result<Self, SnapshotError> {
+        // Check size limit to prevent DOS attacks
+        if buf.len() > SNAPSHOT_DESERIALIZATION_BYTES_LIMIT {
+            return Err(SnapshotError::SizeLimitExceeded(
+                SNAPSHOT_DESERIALIZATION_BYTES_LIMIT,
+            ));
+        }
+
         let snapshot: Self = bitcode::deserialize(buf)?;
 
         // Validate the header
