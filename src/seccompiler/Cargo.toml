@@ -16,7 +16,7 @@ path = "src/bin.rs"
 bench = false
 
 [dependencies]
-bitcode = { version = "0.6.9", features = ["serde"] }
+bitcode = { git = "https://github.com/JackThomson2/bitcode", branch = "feat/opt_out_ub", features = ["serde"] }
 clap = { version = "4.5.54", features = ["derive", "string"] }
 displaydoc = "0.2.5"
 libc = "0.2.180"
