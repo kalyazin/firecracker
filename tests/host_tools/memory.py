@@ -43,7 +43,7 @@ class MemoryMonitor(Thread):
     ARM64_64BIT_MEMORY_GAP_START = 256 << 30
     ARM64_MEMORY_START = 2 << 30
 
-    def __init__(self, vm, threshold=5 << 20, period_s=0.01):
+    def __init__(self, vm, threshold=5 << 20, period_s=0.001):
         """Initialize monitor attributes."""
         Thread.__init__(self)
         self._vm = vm
