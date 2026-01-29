@@ -18,8 +18,10 @@ bench = false
 [features]
 tracing = ["log-instrument", "utils/tracing", "vmm/tracing"]
 gdb = ["vmm/gdb"]
+dhat-heap = ["dhat"]
 
 [dependencies]
+dhat = { version = "0.3", optional = true }
 displaydoc = "0.2.5"
 event-manager = "0.4.2"
 libc = "0.2.180"
