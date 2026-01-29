@@ -36,6 +36,10 @@ use vmm_sys_util::terminal::Terminal;
 
 use crate::seccomp::SeccompConfig;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 // The reason we place default API socket under /run is that API socket is a
 // runtime file.
 // see https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch03s15.html for more information.
@@ -92,6 +96,9 @@ impl From<MainError> for FcExitCode {
 }
 
 fn main() -> ExitCode {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+
     let result = main_exec();
     if let Err(err) = result {
         error!("{err}");
