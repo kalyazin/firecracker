@@ -88,8 +88,9 @@ class MemoryMonitor(Thread):
 
                 mem_total += mmap.rss
             self._current_rss = mem_total
+            print(f"{mem_total=}")
             if mem_total > self.threshold:
-                self._exceeded = ps
+                #self._exceeded = ps
                 return
 
             time.sleep(self._period_s)
