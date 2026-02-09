@@ -256,7 +256,10 @@ class Microvm:
         self.memory_monitor = None
         if monitor_memory:
             self.memory_monitor = MemoryMonitor(
-                self, threshold_restored=5 << 20, threshold_booted=6 << 20
+                self,
+                threshold_restored=5 << 20,
+                threshold_booted=6 << 20,
+                threshold_snapshot=6 << 20,
             )
             self.monitors.append(self.memory_monitor)
 
@@ -1042,6 +1045,9 @@ class Microvm:
         It pauses the microvm before taking the snapshot.
         """
         self.pause()
+        # Notify monitor that snapshot is being created
+        if self.memory_monitor:
+            self.memory_monitor.set_threshold_for_snapshot()
         self.api.snapshot_create.put(
             mem_file_path=str(mem_path),
             snapshot_path=str(vmstate_path),

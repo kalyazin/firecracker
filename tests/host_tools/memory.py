@@ -47,7 +47,8 @@ class MemoryMonitor(Thread):
         self,
         vm,
         threshold_restored=5 << 20,
-        threshold_booted=6 << 20,
+        threshold_booted=5 << 20,
+        threshold_snapshot=6 << 20,
         period_s=0.01,
     ):
         """Initialize monitor attributes."""
@@ -55,6 +56,7 @@ class MemoryMonitor(Thread):
         self._vm = vm
         self.threshold_restored = threshold_restored
         self.threshold_booted = threshold_booted
+        self.threshold_snapshot = threshold_snapshot
         # Start with booted threshold by default
         self.threshold = threshold_booted
         self._exceeded = None
@@ -70,6 +72,10 @@ class MemoryMonitor(Thread):
     def set_threshold_for_restored_vm(self):
         """Set threshold for a restored VM."""
         self.threshold = self.threshold_restored
+
+    def set_threshold_for_snapshot(self):
+        """Set threshold for snapshot creation."""
+        self.threshold = self.threshold_snapshot
 
     def stop(self):
         """Stop the thread"""
