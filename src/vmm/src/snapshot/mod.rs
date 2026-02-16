@@ -83,7 +83,8 @@ struct SnapshotHdr {
 /// and returns the version of it.
 pub fn get_format_version<R: Read>(reader: &mut R) -> Result<Version, SnapshotError> {
     // Check size limit before reading the full file to prevent DOS attacks
-    let mut buf = Vec::new();
+    // Pre-allocate buffer with +1 to match take() limit and avoid reallocation
+    let mut buf = Vec::with_capacity(SNAPSHOT_DESERIALIZATION_BYTES_LIMIT + 1);
     let bytes_read = reader
         .take((SNAPSHOT_DESERIALIZATION_BYTES_LIMIT + 1) as u64)
         .read_to_end(&mut buf)?;
@@ -181,7 +182,8 @@ impl<Data: DeserializeOwned> Snapshot<Data> {
     /// (CRC, snapshot magic value, snapshot version).
     pub fn load<R: Read>(reader: &mut R) -> Result<Self, SnapshotError> {
         // Check size limit before reading the full file to prevent DOS attacks
-        let mut buf = Vec::new();
+        // Pre-allocate buffer with +1 to match take() limit and avoid reallocation
+        let mut buf = Vec::with_capacity(SNAPSHOT_DESERIALIZATION_BYTES_LIMIT + 1);
         let bytes_read = reader
             .take((SNAPSHOT_DESERIALIZATION_BYTES_LIMIT + 1) as u64)
             .read_to_end(&mut buf)?;
