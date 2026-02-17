@@ -91,6 +91,11 @@ impl From<MainError> for FcExitCode {
     }
 }
 
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+
 fn main() -> ExitCode {
     let result = main_exec();
     if let Err(err) = result {
