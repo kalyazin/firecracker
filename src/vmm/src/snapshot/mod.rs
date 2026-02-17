@@ -152,13 +152,6 @@ impl<Data> Snapshot<Data> {
 
 impl<Data: DeserializeOwned> Snapshot<Data> {
     pub(crate) fn load_without_crc_check(buf: &[u8]) -> Result<Self, SnapshotError> {
-        // Check size limit to prevent DOS attacks
-        if buf.len() > SNAPSHOT_DESERIALIZATION_BYTES_LIMIT {
-            return Err(SnapshotError::SizeLimitExceeded(
-                SNAPSHOT_DESERIALIZATION_BYTES_LIMIT,
-            ));
-        }
-
         let snapshot: Self = bitcode::deserialize(buf)?;
 
         // Validate the header
