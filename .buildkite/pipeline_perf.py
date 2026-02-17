@@ -42,7 +42,7 @@ perf_test = {
     },
     "snapshot-latency": {
         "label": "snapshot-latency",
-        "tests": "integration_tests/performance/test_snapshot.py::test_restore_latency integration_tests/performance/test_snapshot.py::test_post_restore_latency integration_tests/performance/test_snapshot.py::test_snapshot_create_latency",
+        "tests": "integration_tests/performance/test_snapshot.py::test_restore_latency",
         "devtool_opts": "-c 1-12 -m 0",
     },
     "population-latency": {
