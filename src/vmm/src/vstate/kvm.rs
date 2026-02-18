@@ -1,9 +1,9 @@
 // Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::KVM_API_VERSION;
 use kvm_ioctls::Kvm as KvmFd;
-use bitcode::{Decode, Encode};
 
 pub use crate::arch::{Kvm, KvmArchError};
 use crate::cpu_config::templates::KvmCapability;

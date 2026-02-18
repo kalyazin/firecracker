@@ -22,8 +22,8 @@ mod common_types {
 use std::borrow::Cow;
 use std::fmt::Debug;
 
-pub use common_types::*;
 use bitcode::{Decode, Encode};
+pub use common_types::*;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -259,7 +259,6 @@ where
         Ok(RegisterValueFilter { filter, value })
     }
 }
-
 
 /// Trait for numeric types
 pub trait Numeric:

@@ -5,8 +5,8 @@
 /// config templates.
 use std::borrow::Cow;
 
-use serde::de::Error;
 use bitcode::{Decode, Encode};
+use serde::de::Error;
 use serde::{Deserialize, Serialize};
 
 use crate::arch::aarch64::regs::{RegSize, reg_size};

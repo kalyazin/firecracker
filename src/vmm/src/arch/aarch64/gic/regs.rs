@@ -5,9 +5,9 @@ use std::fmt::Debug;
 use std::iter::StepBy;
 use std::ops::Range;
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::kvm_device_attr;
 use kvm_ioctls::DeviceFd;
-use bitcode::{Decode, Encode};
 
 use crate::arch::aarch64::gic::GicError;
 use crate::arch::aarch64::gic::gicv3::regs::its_regs::ItsRegisterState;

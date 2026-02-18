@@ -4,12 +4,12 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::{
     KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_PIT_SPEAKER_DUMMY, MsrList, kvm_clock_data, kvm_irqchip, kvm_pit_config, kvm_pit_state2,
 };
 use kvm_ioctls::Cap;
-use bitcode::{Decode, Encode};
 
 use crate::arch::x86_64::msr::MsrError;
 use crate::snapshot::Persist;

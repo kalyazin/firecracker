@@ -555,9 +555,24 @@ cmd_build() {
 
       git branch $branch_name $commitish
       git clone -b $branch_name . $tmp_dir
+      
+      # Set up vendor patches in the cloned directory
+      if [ -f "$tmp_dir/tools/setup-vendor-patches.sh" ]; then
+        say "Setting up vendor patches for revision $revision..."
+        (cd "$tmp_dir" && ./tools/setup-vendor-patches.sh setup > /dev/null 2>&1) || \
+          die "Failed to set up vendor patches for revision $revision"
+      fi
+      
       pushd $tmp_dir
       workdir=$tmp_dir
       extra_args="$extra_args --volume $tmp_dir:$tmp_dir:z"
+    else
+      # Set up vendor patches for current directory
+      if [ -f "./tools/setup-vendor-patches.sh" ]; then
+        say "Setting up vendor patches..."
+        ./tools/setup-vendor-patches.sh setup > /dev/null 2>&1 || \
+          die "Failed to set up vendor patches"
+      fi
     fi
 
     # Run the cargo build process inside the container.

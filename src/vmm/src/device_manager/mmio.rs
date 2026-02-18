@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(target_arch = "x86_64")]
 use acpi_tables::{Aml, aml};
+use bitcode::{Decode, Encode};
 use kvm_ioctls::IoEventAddress;
 use linux_loader::cmdline as kernel_cmdline;
 #[cfg(target_arch = "x86_64")]
 use log::debug;
-use bitcode::{Decode, Encode};
 use vm_allocator::AllocPolicy;
 
 use crate::Vm;

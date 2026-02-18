@@ -1,12 +1,12 @@
 // Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::{
     KVM_DEV_ARM_ITS_RESTORE_TABLES, KVM_DEV_ARM_ITS_SAVE_TABLES, KVM_DEV_ARM_VGIC_GRP_CTRL,
     KVM_DEV_ARM_VGIC_GRP_ITS_REGS,
 };
 use kvm_ioctls::DeviceFd;
-use bitcode::{Decode, Encode};
 
 use crate::arch::aarch64::gic::GicError;
 

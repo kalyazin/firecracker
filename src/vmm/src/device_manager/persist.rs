@@ -6,9 +6,9 @@
 use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex};
 
+use bitcode::{Decode, Encode};
 use event_manager::{MutEventSubscriber, SubscriberOps};
 use log::{error, warn};
-use bitcode::{Decode, Encode};
 
 use super::acpi::ACPIDeviceManager;
 use super::mmio::*;

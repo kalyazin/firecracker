@@ -1,8 +1,8 @@
 // Copyright 2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use derive_more::Display;
 use bitcode::{Decode, Encode};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
 use crate::arch::x86_64::cpu_model::{
@@ -23,7 +23,9 @@ pub mod t2s;
 
 /// Template types available for configuring the x86 CPU features that map
 /// to EC2 instances.
-#[derive(Debug, Default, Display, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Decode, Encode)]
+#[derive(
+    Debug, Default, Display, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Decode, Encode,
+)]
 pub enum StaticCpuTemplate {
     /// C3 Template.
     #[display("C3")]

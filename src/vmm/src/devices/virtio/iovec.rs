@@ -3,8 +3,8 @@
 
 use std::io::ErrorKind;
 
-use libc::{c_void, iovec, size_t};
 use bitcode::{Decode, Encode};
+use libc::{c_void, iovec, size_t};
 use vm_memory::bitmap::Bitmap;
 use vm_memory::{
     GuestMemory, GuestMemoryError, ReadVolatile, VolatileMemoryError, VolatileSlice, WriteVolatile,

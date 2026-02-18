@@ -75,7 +75,12 @@ struct SnapshotHdr {
 
 impl bitcode::__private::ConvertFrom<&SnapshotHdr> for (u64, u64, u64, u64) {
     fn convert_from(hdr: &SnapshotHdr) -> Self {
-        (hdr.magic, hdr.version.major, hdr.version.minor, hdr.version.patch)
+        (
+            hdr.magic,
+            hdr.version.major,
+            hdr.version.minor,
+            hdr.version.patch,
+        )
     }
 }
 
@@ -315,7 +320,8 @@ mod tests {
         ));
 
         let mut bad_snapshot = Snapshot::new(());
-        bad_snapshot.header.version = Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor + 1, 0);
+        bad_snapshot.header.version =
+            Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor + 1, 0);
         let data = bitcode::encode(&bad_snapshot);
         assert!(matches!(
             Snapshot::<()>::load_without_crc_check(&data),
@@ -328,7 +334,8 @@ mod tests {
 
         if SNAPSHOT_VERSION.minor != 0 {
             let mut snapshot = Snapshot::new(());
-            snapshot.header.version = Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor - 1, 0);
+            snapshot.header.version =
+                Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor - 1, 0);
             let data = bitcode::encode(&snapshot);
             Snapshot::<()>::load_without_crc_check(&data).unwrap();
         }
@@ -339,12 +346,17 @@ mod tests {
         Snapshot::<()>::load_without_crc_check(&data).unwrap();
 
         let mut snapshot = Snapshot::new(());
-        snapshot.header.version = Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor, SNAPSHOT_VERSION.patch + 1);
+        snapshot.header.version = Version::new(
+            SNAPSHOT_VERSION.major,
+            SNAPSHOT_VERSION.minor,
+            SNAPSHOT_VERSION.patch + 1,
+        );
         let data = bitcode::encode(&snapshot);
         Snapshot::<()>::load_without_crc_check(&data).unwrap();
 
         let mut snapshot = Snapshot::new(());
-        snapshot.header.version = Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor, 1024);
+        snapshot.header.version =
+            Version::new(SNAPSHOT_VERSION.major, SNAPSHOT_VERSION.minor, 1024);
         let data = bitcode::encode(&snapshot);
         Snapshot::<()>::load_without_crc_check(&data).unwrap();
     }

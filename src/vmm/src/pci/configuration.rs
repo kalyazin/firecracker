@@ -7,9 +7,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use bitcode::{Decode, Encode};
 use byteorder::{ByteOrder, LittleEndian};
 use pci::{PciCapabilityId, PciClassCode, PciSubclass};
-use bitcode::{Decode, Encode};
 
 use super::BarReprogrammingParams;
 use super::msix::MsixConfig;

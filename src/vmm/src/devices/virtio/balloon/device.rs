@@ -5,8 +5,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
 use bitcode::{Decode, Encode};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use utils::time::TimerFd;
 use vmm_sys_util::eventfd::EventFd;

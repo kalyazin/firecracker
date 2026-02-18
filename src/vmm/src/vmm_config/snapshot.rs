@@ -5,9 +5,9 @@
 
 use std::path::PathBuf;
 
+use bitcode::{Decode, Encode};
 /// For crates that depend on `vmm` we export.
 pub use semver::Version;
-use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// The snapshot type options that are available when

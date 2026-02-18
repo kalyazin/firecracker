@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use acpi::ACPIDeviceManager;
+use bitcode::{Decode, Encode};
 use event_manager::{MutEventSubscriber, SubscriberOps};
 #[cfg(target_arch = "x86_64")]
 use legacy::{LegacyDeviceError, PortIODeviceManager};
@@ -19,7 +20,6 @@ use log::{error, info};
 use mmio::{MMIODeviceManager, MmioError};
 use pci_mngr::{PciDevices, PciDevicesConstructorArgs, PciManagerError};
 use persist::MMIODevManagerConstructorArgs;
-use bitcode::{Decode, Encode};
 use utils::time::TimestampUs;
 use vmm_sys_util::eventfd::EventFd;
 

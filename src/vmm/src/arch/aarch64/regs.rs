@@ -8,8 +8,8 @@
 use std::fmt::Write;
 use std::mem::offset_of;
 
-use kvm_bindings::*;
 use bitcode::{Decode, Encode};
+use kvm_bindings::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[allow(non_upper_case_globals)]

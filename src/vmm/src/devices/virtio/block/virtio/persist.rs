@@ -3,8 +3,8 @@
 
 //! Defines the structures needed for saving/restoring block devices.
 
-use device::ConfigSpace;
 use bitcode::{Decode, Encode};
+use device::ConfigSpace;
 use vmm_sys_util::eventfd::EventFd;
 
 use super::device::DiskProperties;

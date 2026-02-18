@@ -8,8 +8,8 @@ use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 
-use log::{Log, Metadata, Record};
 use bitcode::{Decode, Encode};
+use log::{Log, Metadata, Record};
 use serde::{Deserialize, Deserializer, Serialize};
 use utils::time::LocalTime;
 

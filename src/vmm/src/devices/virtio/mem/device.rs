@@ -6,9 +6,9 @@ use std::ops::{Deref, Range};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
+use bitcode::{Decode, Encode};
 use bitvec::vec::BitVec;
 use log::info;
-use bitcode::{Decode, Encode};
 use vm_memory::{
     Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryRegion, GuestUsize,
 };

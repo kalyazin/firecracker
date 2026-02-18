@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use bitvec::vec::BitVec;
 use bitcode::{Decode, Encode};
+use bitvec::vec::BitVec;
 use vm_memory::Address;
 
 use crate::Vm;

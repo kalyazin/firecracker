@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
+use bitcode::{Decode, Encode};
 use byteorder::{ByteOrder, LittleEndian};
 use pci::PciCapabilityId;
-use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use vm_memory::ByteValued;
 

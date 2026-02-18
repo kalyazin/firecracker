@@ -6,9 +6,9 @@ use std::ops::{Deref, DerefMut};
 use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::{KVM_MEM_READONLY, kvm_userspace_memory_region};
 use kvm_ioctls::VmFd;
-use bitcode::{Decode, Encode};
 use vm_allocator::AllocPolicy;
 use vm_memory::mmap::{MmapRegionBuilder, MmapRegionError};
 use vm_memory::{GuestAddress, GuestMemoryError};

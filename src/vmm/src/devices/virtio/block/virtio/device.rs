@@ -14,8 +14,8 @@ use std::os::linux::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use block_io::FileEngine;
 use bitcode::{Decode, Encode};
+use block_io::FileEngine;
 use serde::{Deserialize, Serialize};
 use vm_memory::ByteValued;
 use vmm_sys_util::eventfd::EventFd;

@@ -10,8 +10,8 @@
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
-use byteorder::{ByteOrder, LittleEndian};
 use bitcode::{Decode, Encode};
+use byteorder::{ByteOrder, LittleEndian};
 use vm_memory::GuestAddress;
 
 use crate::devices::virtio::device::VirtioDevice;

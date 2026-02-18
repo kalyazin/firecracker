@@ -9,9 +9,9 @@ use std::fmt::{Debug, Write};
 use std::mem::offset_of;
 use std::sync::Arc;
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::*;
 use kvm_ioctls::{VcpuExit, VcpuFd, VmFd};
-use bitcode::{Decode, Encode};
 use vm_memory::GuestAddress;
 
 use super::get_fdt_addr;

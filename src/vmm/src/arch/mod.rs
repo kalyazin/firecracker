@@ -4,8 +4,8 @@
 use std::fmt;
 use std::sync::LazyLock;
 
-use log::warn;
 use bitcode::{Decode, Encode};
+use log::warn;
 use vm_memory::GuestAddress;
 
 /// Module for aarch64 related functionality.

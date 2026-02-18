@@ -14,13 +14,13 @@ use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 
+use bitcode::{Decode, Encode};
 use kvm_ioctls::{IoEventAddress, NoDatamatch};
 use log::warn;
 use pci::{
     PciBdf, PciCapabilityId, PciClassCode, PciMassStorageSubclass, PciNetworkControllerSubclass,
     PciSubclass,
 };
-use bitcode::{Decode, Encode};
 use thiserror::Error;
 use vm_allocator::{AddressAllocator, AllocPolicy, RangeInclusive};
 use vm_memory::{Address, ByteValued, GuestAddress, Le32};

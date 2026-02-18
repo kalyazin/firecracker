@@ -6,9 +6,9 @@ use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+use bitcode::{Decode, Encode};
 use event_manager::{MutEventSubscriber, SubscriberOps};
 use log::{debug, error, warn};
-use bitcode::{Decode, Encode};
 
 use super::persist::MmdsState;
 use crate::devices::pci::PciSegment;

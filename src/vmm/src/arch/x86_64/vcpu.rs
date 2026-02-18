@@ -9,13 +9,13 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use bitcode::{Decode, Encode};
 use kvm_bindings::{
     CpuId, KVM_MAX_CPUID_ENTRIES, KVM_MAX_MSR_ENTRIES, Msrs, Xsave, kvm_debugregs, kvm_lapic_state,
     kvm_mp_state, kvm_regs, kvm_sregs, kvm_vcpu_events, kvm_xcrs, kvm_xsave, kvm_xsave2,
 };
 use kvm_ioctls::{VcpuExit, VcpuFd};
 use log::{error, warn};
-use bitcode::{Decode, Encode};
 use vmm_sys_util::fam::{self, FamStruct};
 
 use crate::arch::EntryPoint;

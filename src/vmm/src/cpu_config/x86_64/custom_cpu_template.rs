@@ -70,7 +70,9 @@ impl GetCpuTemplate for Option<CpuTemplateType> {
 
 /// CPUID register enumeration
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Decode, Encode, Hash, Ord, PartialOrd)]
+#[derive(
+    Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Decode, Encode, Hash, Ord, PartialOrd,
+)]
 pub enum CpuidRegister {
     Eax,
     Ebx,
@@ -146,7 +148,9 @@ impl CustomCpuTemplate {
 
 /// Wrapper of a mask defined as a bitmap to apply
 /// changes to a given register's value.
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Decode, Encode, Hash)]
+#[derive(
+    Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Decode, Encode, Hash,
+)]
 pub struct RegisterModifier {
     /// Pointer of the location to be bit mapped.
     #[serde(

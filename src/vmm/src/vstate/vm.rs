@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use bitcode::{Decode, Encode};
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::KVM_IRQCHIP_IOAPIC;
 use kvm_bindings::{
@@ -20,7 +21,6 @@ use kvm_bindings::{
 };
 use kvm_ioctls::VmFd;
 use log::debug;
-use bitcode::{Decode, Encode};
 use vmm_sys_util::errno;
 use vmm_sys_util::eventfd::EventFd;
 
