@@ -536,9 +536,9 @@ def uvm_plain_6_1(microvm_factory, guest_kernel_linux_6_1, rootfs, pci_enabled):
 
 
 @pytest.fixture
-def uvm_plain_acpi(microvm_factory, guest_kernel_acpi, rootfs, pci_enabled):
+def uvm_plain_acpi(microvm_factory, guest_kernel_acpi, rootfs):
     """Create a vanilla VM, non-parametrized"""
-    return microvm_factory.build(guest_kernel_acpi, rootfs, pci=pci_enabled)
+    return microvm_factory.build(guest_kernel_acpi, rootfs)
 
 
 @pytest.fixture
