@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use vm_fdt::{Error as VmFdtError, FdtWriter, FdtWriterNode};
 use vm_memory::{GuestMemoryError, GuestMemoryRegion};
 
-use super::cache_info::{CacheEntry, read_cache_config};
+use super::cache_info::{CacheEntry, CacheType, read_cache_config};
 use super::gic::GICDevice;
 use crate::arch::{
     MEM_32BIT_DEVICES_SIZE, MEM_32BIT_DEVICES_START, MEM_64BIT_DEVICES_SIZE,
@@ -31,11 +31,9 @@ const GIC_PHANDLE: u32 = 1;
 const CLOCK_PHANDLE: u32 = 2;
 // This is a value for uniquely identifying the FDT node declaring the MSI controller.
 const MSI_PHANDLE: u32 = 3;
-// You may be wondering why this big value?
-// This phandle is used to uniquely identify the FDT nodes containing cache information. Each cpu
-// can have a variable number of caches, some of these caches may be shared with other cpus.
-// So, we start the indexing of the phandles used from a really big number and then subtract from
-// it as we need more and more phandle for each cache representation.
+// Phandle base for cache nodes. Each cpu can have a variable number of caches,
+// some of which may be shared. We start from a large value and subtract to
+// generate unique phandles for each cache representation.
 const LAST_CACHE_PHANDLE: u32 = 4000;
 // Read the documentation specified when appending the root node to the FDT.
 const ADDRESS_CELLS: u32 = 0x2;
@@ -71,6 +69,7 @@ pub fn create_fdt(
     device_manager: &DeviceManager,
     gic_device: &GICDevice,
     initrd: &Option<InitrdConfig>,
+    clidr: u64,
 ) -> Result<Vec<u8>, FdtError> {
     // Allocate stuff necessary for storing the blob.
     let mut fdt_writer = FdtWriter::new()?;
@@ -89,7 +88,7 @@ pub fn create_fdt(
     // This is not mandatory but we use it to point the root node to the node
     // containing description of the interrupt controller for this VM.
     fdt_writer.property_u32("interrupt-parent", GIC_PHANDLE)?;
-    create_cpu_nodes(&mut fdt_writer, &vcpu_mpidr)?;
+    create_cpu_nodes(&mut fdt_writer, &vcpu_mpidr, clidr)?;
     create_memory_node(&mut fdt_writer, guest_mem)?;
     create_chosen_node(&mut fdt_writer, cmdline, initrd)?;
     create_gic_node(&mut fdt_writer, gic_device)?;
@@ -109,20 +108,46 @@ pub fn create_fdt(
     Ok(fdt_final)
 }
 
+// CLIDR_EL1 cache type encodings (3 bits per level).
+const CLIDR_CTYPE_ICACHE: u8 = 1;
+const CLIDR_CTYPE_DCACHE: u8 = 2;
+const CLIDR_CTYPE_SEPARATE: u8 = 3;
+const CLIDR_CTYPE_UNIFIED: u8 = 4;
+
+/// Extract the cache type for a given level (1-based) from CLIDR_EL1.
+fn clidr_ctype(clidr: u64, level: u8) -> u8 {
+    ((clidr >> (3 * (level - 1))) & 0x7) as u8
+}
+
+/// Extract LoC (Level of Coherence) from CLIDR_EL1 bits [26:24].
+fn clidr_loc(clidr: u64) -> u8 {
+    ((clidr >> 24) & 0x7) as u8
+}
+
 // Following are the auxiliary function for creating the different nodes that we append to our FDT.
-fn create_cpu_nodes(fdt: &mut FdtWriter, vcpu_mpidr: &[u64]) -> Result<(), FdtError> {
-    // Since the L1 caches are not shareable among CPUs and they are direct attributes of the
-    // cpu in the device tree, we process the L1 and non-L1 caches separately.
-    // We use sysfs for extracting the cache information.
+fn create_cpu_nodes(
+    fdt: &mut FdtWriter,
+    vcpu_mpidr: &[u64],
+    clidr: u64,
+) -> Result<(), FdtError> {
+    // Read all cache information from host sysfs, filtered to levels up to
+    // the LoC from the KVM-fabricated CLIDR_EL1.
+    let loc = clidr_loc(clidr);
     let mut l1_caches: Vec<CacheEntry> = Vec::new();
     let mut non_l1_caches: Vec<CacheEntry> = Vec::new();
-    // We use sysfs for extracting the cache information.
-    read_cache_config(&mut l1_caches, &mut non_l1_caches)
+    read_cache_config(&mut l1_caches, &mut non_l1_caches, loc)
         .map_err(|err| FdtError::ReadCacheInfo(err.to_string()))?;
 
-    // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
+    // Determine which L1 cache types CLIDR_EL1 exposes to the guest.
+    // The DT must only describe cache types that match CLIDR, otherwise
+    // of_count_cache_leaves() in the guest kernel will count more leaves
+    // than populate_cache_leaves() fills from CLIDR, breaking cache sysfs.
+    let l1_ctype = clidr_ctype(clidr, 1);
+    let l1_has_dcache = matches!(l1_ctype, CLIDR_CTYPE_DCACHE | CLIDR_CTYPE_SEPARATE);
+    let l1_has_icache = matches!(l1_ctype, CLIDR_CTYPE_ICACHE | CLIDR_CTYPE_SEPARATE);
+    let l1_has_unified = l1_ctype == CLIDR_CTYPE_UNIFIED;
+
     let cpus = fdt.begin_node("cpus")?;
-    // As per documentation, on ARM v8 64-bit systems value should be set to 2.
     fdt.property_u32("#address-cells", 0x02)?;
     fdt.property_u32("#size-cells", 0x0)?;
     let num_cpus = vcpu_mpidr.len();
@@ -130,17 +155,19 @@ fn create_cpu_nodes(fdt: &mut FdtWriter, vcpu_mpidr: &[u64]) -> Result<(), FdtEr
         let cpu = fdt.begin_node(&format!("cpu@{:x}", cpu_index))?;
         fdt.property_string("device_type", "cpu")?;
         fdt.property_string("compatible", "arm,arm-v8")?;
-        // The power state coordination interface (PSCI) needs to be enabled for
-        // all vcpus.
         fdt.property_string("enable-method", "psci")?;
-        // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
-        // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
         fdt.property_u64("reg", mpidr & 0x7FFFFF)?;
 
+        // Emit L1 cache properties only for types present in CLIDR_EL1.
         for cache in l1_caches.iter() {
-            // Please check out
-            // https://github.com/devicetree-org/devicetree-specification/releases/download/v0.3/devicetree-specification-v0.3.pdf,
-            // section 3.8.
+            let dominated = match cache.type_ {
+                CacheType::Data => l1_has_dcache,
+                CacheType::Instruction => l1_has_icache,
+                CacheType::Unified => l1_has_unified,
+            };
+            if !dominated {
+                continue;
+            }
             if let Some(size) = cache.size_ {
                 fdt.property_u32(cache.type_.of_cache_size(), size)?;
             }
@@ -152,22 +179,11 @@ fn create_cpu_nodes(fdt: &mut FdtWriter, vcpu_mpidr: &[u64]) -> Result<(), FdtEr
             }
         }
 
-        // Some of the non-l1 caches can be shared amongst CPUs. You can see an example of a shared
-        // scenario in https://github.com/devicetree-org/devicetree-specification/releases/download/v0.3/devicetree-specification-v0.3.pdf,
-        // 3.8.1 Example.
+        // Non-L1 caches may be shared amongst CPUs. See devicetree-specification
+        // v0.3, section 3.8.1 for an example of a shared cache scenario.
         let mut prev_level = 1;
         let mut cache_node: Option<FdtWriterNode> = None;
         for cache in non_l1_caches.iter() {
-            // We append the next-level-cache node (the node that specifies the cache hierarchy)
-            // in the next iteration. For example,
-            // L2-cache {
-            //      cache-size = <0x8000> ----> first iteration
-            //      next-level-cache = <&l3-cache> ---> second iteration
-            // }
-            // The cpus per unit cannot be 0 since the sysfs will also include the current cpu
-            // in the list of shared cpus so it needs to be at least 1. Firecracker trusts the host.
-            // The operation is safe since we already checked when creating cache attributes that
-            // cpus_per_unit is not 0 (.e look for mask_str2bit_count function).
             let cache_phandle = LAST_CACHE_PHANDLE
                 - u32::try_from(
                     num_cpus * (cache.level - 2) as usize
@@ -605,6 +621,7 @@ mod tests {
             &device_manager,
             &gic,
             &None,
+            0x2000023,
         )
         .unwrap();
     }
@@ -630,6 +647,7 @@ mod tests {
             &device_manager,
             &gic,
             &None,
+            0x2000023,
         )
         .unwrap();
 
@@ -641,7 +659,7 @@ mod tests {
         // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         // let dtb_path = match gic.fdt_compatibility() {
         // "arm,gic-v3" => "output_GICv3.dtb",
-        // "arm,gic-400" => ("output_GICv2.dtb"),
+        // "arm,gic-400" => "output_GICv2.dtb",
         // _ => panic!("Unexpected gic version!"),
         // };
         // let mut output = fs::OpenOptions::new()
@@ -692,6 +710,7 @@ mod tests {
             &device_manager,
             &gic,
             &Some(initrd),
+            0x2000023,
         )
         .unwrap();
 
@@ -703,7 +722,7 @@ mod tests {
         // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         // let dtb_path = match gic.fdt_compatibility() {
         // "arm,gic-v3" => "output_initrd_GICv3.dtb",
-        // "arm,gic-400" => ("output_initrd_GICv2.dtb"),
+        // "arm,gic-400" => "output_initrd_GICv2.dtb",
         // _ => panic!("Unexpected gic version!"),
         // };
         // let mut output = fs::OpenOptions::new()

@@ -190,19 +190,19 @@ impl CacheType {
         }
     }
 
-    pub fn of_cache_type(&self) -> Option<&'static str> {
-        match self {
-            Self::Instruction => None,
-            Self::Data => None,
-            Self::Unified => Some("cache-unified"),
-        }
-    }
-
     pub fn of_cache_sets(&self) -> &str {
         match self {
             Self::Instruction => "i-cache-sets",
             Self::Data => "d-cache-sets",
             Self::Unified => "cache-sets",
+        }
+    }
+
+    pub fn of_cache_type(&self) -> Option<&'static str> {
+        match self {
+            Self::Instruction => None,
+            Self::Data => None,
+            Self::Unified => Some("cache-unified"),
         }
     }
 }
@@ -268,21 +268,10 @@ fn mask_str2bit_count(mask_str: &str) -> Result<u16, CacheInfoError> {
     Ok(bit_count)
 }
 
-fn append_cache_level(
-    cache_l1: &mut Vec<CacheEntry>,
-    cache_non_l1: &mut Vec<CacheEntry>,
-    cache: CacheEntry,
-) {
-    if cache.level == 1 {
-        cache_l1.push(cache);
-    } else {
-        cache_non_l1.push(cache);
-    }
-}
-
 pub(crate) fn read_cache_config(
     cache_l1: &mut Vec<CacheEntry>,
     cache_non_l1: &mut Vec<CacheEntry>,
+    max_level: u8,
 ) -> Result<(), CacheInfoError> {
     // It is used to make sure we log warnings for missing files only for one level because
     // if an attribute is missing for a level for sure it will be missing for other levels too.
@@ -294,15 +283,27 @@ pub(crate) fn read_cache_config(
     for index in 0..=MAX_CACHE_LEVEL {
         match CacheEntry::from_index(index, engine.store.as_ref()) {
             Ok(cache) => {
-                append_cache_level(cache_l1, cache_non_l1, cache);
+                if cache.level <= max_level {
+                    if cache.level == 1 {
+                        cache_l1.push(cache);
+                    } else {
+                        cache_non_l1.push(cache);
+                    }
+                }
             }
-            // Missing cache level or type means not further search is necessary.
+            // Missing cache level or type means no further search is necessary.
             Err(CacheInfoError::MissingCacheLevel) | Err(CacheInfoError::MissingCacheType) => break,
             // Missing cache files is not necessary an error so we
             // do not propagate it upwards. We were prudent enough to log it.
             Err(CacheInfoError::MissingOptionalAttr(msg, cache)) => {
                 let level = cache.level;
-                append_cache_level(cache_l1, cache_non_l1, cache);
+                if cache.level <= max_level {
+                    if cache.level == 1 {
+                        cache_l1.push(cache);
+                    } else {
+                        cache_non_l1.push(cache);
+                    }
+                }
                 if !msg.is_empty() && !logged_missing_attr {
                     warn!("Could not read the {msg} for cache level {level}.");
                     logged_missing_attr = true;
@@ -365,10 +366,22 @@ mod tests {
         let mut cache_struct = HashMap::new();
         cache_struct.insert("index0/level".to_string(), "1".to_string());
         cache_struct.insert("index0/type".to_string(), "Data".to_string());
+        cache_struct.insert("index0/size".to_string(), "64K".to_string());
+        cache_struct.insert("index0/coherency_line_size".to_string(), "64".to_string());
+        cache_struct.insert("index0/number_of_sets".to_string(), "256".to_string());
+        cache_struct.insert("index0/shared_cpu_map".to_string(), "00000000,00000001".to_string());
         cache_struct.insert("index1/level".to_string(), "1".to_string());
         cache_struct.insert("index1/type".to_string(), "Instruction".to_string());
+        cache_struct.insert("index1/size".to_string(), "64K".to_string());
+        cache_struct.insert("index1/coherency_line_size".to_string(), "64".to_string());
+        cache_struct.insert("index1/number_of_sets".to_string(), "256".to_string());
+        cache_struct.insert("index1/shared_cpu_map".to_string(), "00000000,00000001".to_string());
         cache_struct.insert("index2/level".to_string(), "2".to_string());
         cache_struct.insert("index2/type".to_string(), "Unified".to_string());
+        cache_struct.insert("index2/size".to_string(), "1M".to_string());
+        cache_struct.insert("index2/coherency_line_size".to_string(), "64".to_string());
+        cache_struct.insert("index2/number_of_sets".to_string(), "1024".to_string());
+        cache_struct.insert("index2/shared_cpu_map".to_string(), "00000000,00000001".to_string());
         cache_struct
     }
 
@@ -571,9 +584,8 @@ mod tests {
     fn test_sysfs_read_caches() {
         let mut l1_caches: Vec<CacheEntry> = Vec::new();
         let mut non_l1_caches: Vec<CacheEntry> = Vec::new();
-        // We use sysfs for extracting the cache information.
-        read_cache_config(&mut l1_caches, &mut non_l1_caches).unwrap();
-        assert_eq!(l1_caches.len(), 2);
+        // Use max_level=7 to read all available cache levels.
+        read_cache_config(&mut l1_caches, &mut non_l1_caches, 7).unwrap();
         assert_eq!(l1_caches.len(), 2);
     }
 }

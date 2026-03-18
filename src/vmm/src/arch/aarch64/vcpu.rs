@@ -164,6 +164,15 @@ impl KvmVcpu {
         }
     }
 
+    /// Read the KVM-fabricated CLIDR_EL1 register value.
+    pub fn get_clidr(&self) -> Result<u64, VcpuArchError> {
+        let mut buf = [0_u8; 8];
+        self.fd
+            .get_one_reg(CLIDR_EL1, &mut buf)
+            .map_err(|e| VcpuArchError::GetOneReg(CLIDR_EL1, e))?;
+        Ok(u64::from_le_bytes(buf))
+    }
+
     /// Configures an aarch64 specific vcpu for booting Linux.
     ///
     /// # Arguments

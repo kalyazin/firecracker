@@ -123,6 +123,15 @@ pub fn configure_system_for_boot(
         .map(|cpu| cpu.kvm_vcpu.get_mpidr())
         .collect::<Result<Vec<_>, _>>()
         .map_err(KvmVcpuError::ConfigureRegisters)?;
+
+    // Read the maximum cache level (LoC) from the KVM-fabricated CLIDR_EL1
+    // so the device tree only describes cache levels that match what the
+    // guest will see via the register.
+    let clidr = vcpus[0]
+        .kvm_vcpu
+        .get_clidr()
+        .map_err(KvmVcpuError::ConfigureRegisters)?;
+
     let cmdline = boot_cmdline
         .as_cstring()
         .expect("Cannot create cstring from cmdline string");
@@ -134,6 +143,7 @@ pub fn configure_system_for_boot(
         device_manager,
         vm.get_irqchip(),
         initrd,
+        clidr,
     )?;
 
     let fdt_address = GuestAddress(get_fdt_addr(vm.guest_memory()));

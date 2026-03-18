@@ -172,24 +172,19 @@ def _aarch64_parse_cache_info(test_microvm, no_cpus):
 def _check_cache_topology_arm(test_microvm, no_cpus, kernel_version_tpl):
     guest_cache_info, host_cache_info = _aarch64_parse_cache_info(test_microvm, no_cpus)
 
-    # Starting from 6.3 kernel cache representation for aarch64 platform has changed.
-    # It is no longer equivalent to the host cache representation.
-    # The main change is in the level 1 cache, so for newer kernels we
-    # compare only level 2 and level 3 caches
     if kernel_version_tpl < (6, 3):
         assert guest_cache_info == host_cache_info
     else:
-        guest_first_non_level_1 = 0
-        while guest_cache_info[guest_first_non_level_1]["level"] == "1":
-            guest_first_non_level_1 += 1
-        guest_slice = guest_cache_info[guest_first_non_level_1:]
-
-        host_first_non_level_1 = 0
-        while host_cache_info[host_first_non_level_1]["level"] == "1":
-            host_first_non_level_1 += 1
-        host_slice = host_cache_info[host_first_non_level_1:]
-
-        assert guest_slice == host_slice
+        # On host kernels >= 6.3, KVM fabricates CLIDR_EL1 and Firecracker
+        # builds the DT to match it. The guest cache topology is determined
+        # by the intersection of CLIDR_EL1 (structure) and the DT (properties
+        # from host sysfs). Since the fabricated CLIDR may differ from the
+        # host's real cache hierarchy, we only verify that the guest has
+        # non-empty cache info and that L1 properties match the host.
+        assert len(guest_cache_info) > 0, "Guest has no cache info"
+        guest_l1 = [c for c in guest_cache_info if c["level"] == "1"]
+        host_l1 = [c for c in host_cache_info if c["level"] == "1"]
+        assert guest_l1 == host_l1
 
 
 @pytest.mark.parametrize("num_vcpus", [1, 2, 16])
