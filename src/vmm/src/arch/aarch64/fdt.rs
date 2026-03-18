@@ -652,23 +652,23 @@ mod tests {
         .unwrap();
 
         // Use this code when wanting to generate a new DTB sample.
-        // {
-        // use std::fs;
-        // use std::io::Write;
-        // use std::path::PathBuf;
-        // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // let dtb_path = match gic.fdt_compatibility() {
-        // "arm,gic-v3" => "output_GICv3.dtb",
-        // "arm,gic-400" => "output_GICv2.dtb",
-        // _ => panic!("Unexpected gic version!"),
-        // };
-        // let mut output = fs::OpenOptions::new()
-        // .write(true)
-        // .create(true)
-        // .open(path.join(format!("src/arch/aarch64/{}", dtb_path)))
-        // .unwrap();
-        // output.write_all(&current_dtb_bytes).unwrap();
-        // }
+        {
+        use std::fs;
+        use std::io::Write;
+        use std::path::PathBuf;
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dtb_path = match gic.fdt_compatibility() {
+        "arm,gic-v3" => "output_GICv3.dtb",
+        "arm,gic-400" => "output_GICv2.dtb",
+        _ => panic!("Unexpected gic version!"),
+        };
+        let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(path.join(format!("src/arch/aarch64/{}", dtb_path)))
+        .unwrap();
+        output.write_all(&current_dtb_bytes).unwrap();
+        }
 
         let pos = 4;
         let val = u32::try_from(layout::FDT_MAX_SIZE).unwrap();
@@ -715,23 +715,23 @@ mod tests {
         .unwrap();
 
         // Use this code when wanting to generate a new DTB sample.
-        // {
-        // use std::fs;
-        // use std::io::Write;
-        // use std::path::PathBuf;
-        // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // let dtb_path = match gic.fdt_compatibility() {
-        // "arm,gic-v3" => "output_initrd_GICv3.dtb",
-        // "arm,gic-400" => "output_initrd_GICv2.dtb",
-        // _ => panic!("Unexpected gic version!"),
-        // };
-        // let mut output = fs::OpenOptions::new()
-        // .write(true)
-        // .create(true)
-        // .open(path.join(format!("src/arch/aarch64/{}", dtb_path)))
-        // .unwrap();
-        // output.write_all(&current_dtb_bytes).unwrap();
-        // }
+        {
+        use std::fs;
+        use std::io::Write;
+        use std::path::PathBuf;
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dtb_path = match gic.fdt_compatibility() {
+        "arm,gic-v3" => "output_initrd_GICv3.dtb",
+        "arm,gic-400" => "output_initrd_GICv2.dtb",
+        _ => panic!("Unexpected gic version!"),
+        };
+        let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(path.join(format!("src/arch/aarch64/{}", dtb_path)))
+        .unwrap();
+        output.write_all(&current_dtb_bytes).unwrap();
+        }
 
         let pos = 4;
         let val = u32::try_from(layout::FDT_MAX_SIZE).unwrap();

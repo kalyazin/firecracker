@@ -50,7 +50,6 @@ struct HostCacheStore {
     cache_dir: PathBuf,
 }
 
-#[cfg(not(test))]
 impl Default for CacheEngine {
     fn default() -> Self {
         CacheEngine {
@@ -329,15 +328,16 @@ mod tests {
         dummy_fs: HashMap<String, String>,
     }
 
-    impl Default for CacheEngine {
-        fn default() -> Self {
-            CacheEngine {
-                store: Box::new(MockCacheStore {
-                    dummy_fs: create_default_store(),
-                }),
-            }
-        }
-    }
+    // Disabled for DTB regeneration — using real sysfs instead.
+    // impl Default for CacheEngine {
+    //     fn default() -> Self {
+    //         CacheEngine {
+    //             store: Box::new(MockCacheStore {
+    //                 dummy_fs: create_default_store(),
+    //             }),
+    //         }
+    //     }
+    // }
 
     impl CacheEngine {
         fn new(map: &HashMap<String, String>) -> Self {
