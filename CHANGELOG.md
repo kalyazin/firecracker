@@ -28,6 +28,9 @@ and this project adheres to
   a descriptor chain that caused Firecracker to allocate more host memory than
   the guest actually provided, potentially leading to excessive host memory
   consumption.
+- [#5780](https://github.com/firecracker-microvm/firecracker/pull/5780): Fixed
+  missing `/sys/devices/system/cpu/cpu*/cache/*` in aarch64 guests when running
+  on host kernels >= 6.3 with guest kernels >= 6.1.156.
 
 ## [1.15.0]
 
