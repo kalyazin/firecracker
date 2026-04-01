@@ -36,7 +36,6 @@ use std::io::Read;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
-use log::{debug, error, info, warn};
 use vmm_sys_util::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 
 use super::super::csm::ConnState;
@@ -47,7 +46,9 @@ use super::muxer_rxq::MuxerRxQ;
 use super::{MuxerConnection, VsockUnixBackendError, defs};
 use crate::devices::virtio::vsock::metrics::METRICS;
 use crate::devices::virtio::vsock::packet::{VsockPacketRx, VsockPacketTx};
-use crate::logger::IncMetric;
+use crate::logger::{
+    IncMetric, debug_rate_limited, error_rate_limited, info_rate_limited, warn_rate_limited,
+};
 
 /// A unique identifier of a `MuxerConnection` object. Connections are stored in a hash map,
 /// keyed by a `ConnMapKey` object.
@@ -181,7 +182,7 @@ impl VsockChannel for VsockMuxer {
                     });
                 }
 
-                debug!("vsock muxer: RX pkt: {:?}", pkt.hdr);
+                debug_rate_limited!("vsock muxer: RX pkt: {:?}", pkt.hdr);
                 return Ok(());
             }
         }
@@ -203,7 +204,7 @@ impl VsockChannel for VsockMuxer {
             peer_port: pkt.hdr.src_port(),
         };
 
-        debug!(
+        debug_rate_limited!(
             "vsock: muxer.send[rxq.len={}]: {:?}",
             self.rxq.len(),
             pkt.hdr
@@ -219,7 +220,7 @@ impl VsockChannel for VsockMuxer {
         // We don't know how to handle packets addressed to other CIDs. We only handle the host
         // part of the guest - host communication here.
         if pkt.hdr.dst_cid() != uapi::VSOCK_HOST_CID {
-            info!(
+            info_rate_limited!(
                 "vsock: dropping guest packet for unknown CID: {:?}",
                 pkt.hdr
             );
@@ -299,7 +300,7 @@ impl VsockEpollListener for VsockMuxer {
                 }
             }
             Err(err) => {
-                warn!("vsock: failed to consume muxer epoll event: {}", err);
+                warn_rate_limited!("vsock: failed to consume muxer epoll event: {}", err);
                 METRICS.muxer_event_fails.inc();
             }
         }
@@ -342,9 +343,10 @@ impl VsockMuxer {
 
     /// Handle/dispatch an epoll event to its listener.
     fn handle_event(&mut self, fd: RawFd, event_set: EventSet) {
-        debug!(
+        debug_rate_limited!(
             "vsock: muxer processing event: fd={}, evset={:?}",
-            fd, event_set
+            fd,
+            event_set
         );
 
         match self.listener_map.get_mut(&fd) {
@@ -366,7 +368,9 @@ impl VsockMuxer {
                 if self.conn_map.len() == defs::MAX_CONNECTIONS {
                     // If we're already maxed-out on connections, we'll just accept and
                     // immediately discard this potentially new one.
-                    warn!("vsock: connection limit reached; refusing new host connection");
+                    warn_rate_limited!(
+                        "vsock: connection limit reached; refusing new host connection"
+                    );
                     self.host_sock.accept().map(|_| 0).unwrap_or(0);
                     return;
                 }
@@ -387,7 +391,7 @@ impl VsockMuxer {
                         self.add_listener(stream.as_raw_fd(), EpollListener::LocalStream(stream))
                     })
                     .unwrap_or_else(|err| {
-                        warn!("vsock: unable to accept local connection: {:?}", err);
+                        warn_rate_limited!("vsock: unable to accept local connection: {:?}", err);
                     });
             }
 
@@ -413,15 +417,19 @@ impl VsockMuxer {
                             )
                         })
                         .unwrap_or_else(|err| {
-                            info!("vsock: error adding local-init connection: {:?}", err);
+                            info_rate_limited!(
+                                "vsock: error adding local-init connection: {:?}",
+                                err
+                            );
                         })
                 }
             }
 
             _ => {
-                info!(
+                info_rate_limited!(
                     "vsock: unexpected event: fd={:?}, evset={:?}",
-                    fd, event_set
+                    fd,
+                    event_set
                 );
                 METRICS.muxer_event_fails.inc();
             }
@@ -491,7 +499,7 @@ impl VsockMuxer {
         self.sweep_killq();
 
         if self.conn_map.len() >= defs::MAX_CONNECTIONS {
-            info!(
+            info_rate_limited!(
                 "vsock: muxer connection limit reached ({})",
                 defs::MAX_CONNECTIONS
             );
@@ -581,9 +589,10 @@ impl VsockMuxer {
             self.epoll
                 .ctl(ControlOperation::Delete, fd, EpollEvent::default())
                 .unwrap_or_else(|err| {
-                    warn!(
+                    warn_rate_limited!(
                         "vosck muxer: error removing epoll listener for fd {:?}: {:?}",
-                        fd, err
+                        fd,
+                        err
                     );
                 });
         }
@@ -670,11 +679,11 @@ impl VsockMuxer {
                         // If we can't write a dozen bytes to a pristine connection something
                         // must be really wrong. Killing it.
                         conn.kill();
-                        warn!("vsock: unable to fully write connection ack msg.");
+                        warn_rate_limited!("vsock: unable to fully write connection ack msg.");
                     }
                     Err(err) => {
                         conn.kill();
-                        warn!("vsock: unable to ack host connection: {:?}", err);
+                        warn_rate_limited!("vsock: unable to ack host connection: {:?}", err);
                     }
                 };
             }
@@ -704,9 +713,12 @@ impl VsockMuxer {
                 if *evset != new_evset {
                     // If the set of events that the connection is interested in has changed,
                     // we need to update its epoll listener.
-                    debug!(
+                    debug_rate_limited!(
                         "vsock: updating listener for (lp={}, pp={}): old={:?}, new={:?}",
-                        key.local_port, key.peer_port, *evset, new_evset
+                        key.local_port,
+                        key.peer_port,
+                        *evset,
+                        new_evset
                     );
 
                     *evset = new_evset;
@@ -720,9 +732,11 @@ impl VsockMuxer {
                             // This really shouldn't happen, like, ever. However, "famous last
                             // words" and all that, so let's just kill it with fire, and walk away.
                             self.kill_connection(key);
-                            error!(
+                            error_rate_limited!(
                                 "vsock: error updating epoll listener for (lp={}, pp={}): {:?}",
-                                key.local_port, key.peer_port, err
+                                key.local_port,
+                                key.peer_port,
+                                err
                             );
                             METRICS.muxer_event_fails.inc();
                         });
@@ -739,9 +753,11 @@ impl VsockMuxer {
                 )
                 .unwrap_or_else(|err| {
                     self.kill_connection(key);
-                    error!(
+                    error_rate_limited!(
                         "vsock: error updating epoll listener for (lp={}, pp={}): {:?}",
-                        key.local_port, key.peer_port, err
+                        key.local_port,
+                        key.peer_port,
+                        err
                     );
                     METRICS.muxer_event_fails.inc();
                 });
@@ -785,9 +801,10 @@ impl VsockMuxer {
             peer_port,
         });
         if !pushed {
-            warn!(
+            warn_rate_limited!(
                 "vsock: muxer.rxq full; dropping RST packet for lp={}, pp={}",
-                local_port, peer_port
+                local_port,
+                peer_port
             );
         }
     }

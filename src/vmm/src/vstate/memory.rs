@@ -10,9 +10,9 @@ use std::io::SeekFrom;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
+use crate::logger::error_rate_limited;
 use bitvec::vec::BitVec;
 use kvm_bindings::{KVM_MEM_LOG_DIRTY_PAGES, kvm_userspace_memory_region};
-use log::error;
 use serde::{Deserialize, Serialize};
 pub use vm_memory::bitmap::{AtomicBitmap, BS, Bitmap, BitmapSlice};
 pub use vm_memory::mmap::MmapRegionBuilder;
@@ -414,7 +414,7 @@ impl GuestRegionMmapExt {
                 };
                 if ret == libc::MAP_FAILED {
                     let os_error = std::io::Error::last_os_error();
-                    error!("discard_range: mmap failed: {:?}", os_error);
+                    error_rate_limited!("discard_range: mmap failed: {:?}", os_error);
                     Err(GuestMemoryError::IOError(os_error))
                 } else {
                     Ok(())
@@ -432,7 +432,7 @@ impl GuestRegionMmapExt {
                 let ret = unsafe { libc::madvise(phys_address.cast(), len, libc::MADV_DONTNEED) };
                 if ret < 0 {
                     let os_error = std::io::Error::last_os_error();
-                    error!("discard_range: madvise failed: {:?}", os_error);
+                    error_rate_limited!("discard_range: madvise failed: {:?}", os_error);
                     Err(GuestMemoryError::IOError(os_error))
                 } else {
                     Ok(())

@@ -7,7 +7,7 @@ use vmm_sys_util::epoll::EventSet;
 use super::{DEFLATE_INDEX, INFLATE_INDEX, STATS_INDEX, report_balloon_event_fail};
 use crate::devices::virtio::balloon::device::Balloon;
 use crate::devices::virtio::device::VirtioDevice;
-use crate::logger::{error, warn};
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl Balloon {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -24,14 +24,14 @@ impl Balloon {
             Self::PROCESS_VIRTQ_INFLATE,
             EventSet::IN,
         )) {
-            error!("Failed to register inflate queue event: {}", err);
+            error_rate_limited!("Failed to register inflate queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.queue_evts[DEFLATE_INDEX],
             Self::PROCESS_VIRTQ_DEFLATE,
             EventSet::IN,
         )) {
-            error!("Failed to register deflate queue event: {}", err);
+            error_rate_limited!("Failed to register deflate queue event: {}", err);
         }
         if self.stats_enabled() {
             if let Err(err) = ops.add(Events::with_data(
@@ -39,14 +39,14 @@ impl Balloon {
                 Self::PROCESS_VIRTQ_STATS,
                 EventSet::IN,
             )) {
-                error!("Failed to register stats queue event: {}", err);
+                error_rate_limited!("Failed to register stats queue event: {}", err);
             }
             if let Err(err) = ops.add(Events::with_data(
                 &self.stats_timer,
                 Self::PROCESS_STATS_TIMER,
                 EventSet::IN,
             )) {
-                error!("Failed to register stats timerfd event: {}", err);
+                error_rate_limited!("Failed to register stats timerfd event: {}", err);
             }
         }
 
@@ -57,7 +57,7 @@ impl Balloon {
                 EventSet::IN,
             ))
         {
-            error!("Failed to register free page hinting queue event: {}", err);
+            error_rate_limited!("Failed to register free page hinting queue event: {}", err);
         }
 
         if self.free_page_reporting()
@@ -67,7 +67,7 @@ impl Balloon {
                 EventSet::IN,
             ))
         {
-            error!(
+            error_rate_limited!(
                 "Failed to register free page reporting queue event: {}",
                 err
             );
@@ -80,13 +80,13 @@ impl Balloon {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to register activate event: {}", err);
+            error_rate_limited!("Failed to register activate event: {}", err);
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_evt.read() {
-            error!("Failed to consume balloon activate event: {:?}", err);
+            error_rate_limited!("Failed to consume balloon activate event: {:?}", err);
         }
         self.register_runtime_events(ops);
         if let Err(err) = ops.remove(Events::with_data(
@@ -94,7 +94,7 @@ impl Balloon {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to un-register activate event: {}", err);
+            error_rate_limited!("Failed to un-register activate event: {}", err);
         }
     }
 }
@@ -106,9 +106,10 @@ impl MutEventSubscriber for Balloon {
         let supported_events = EventSet::IN;
 
         if !supported_events.contains(event_set) {
-            warn!(
+            warn_rate_limited!(
                 "Received unknown event: {:?} from source: {:?}",
-                event_set, source
+                event_set,
+                source
             );
             return;
         }
@@ -135,11 +136,11 @@ impl MutEventSubscriber for Balloon {
                     .process_free_page_reporting_queue_event()
                     .unwrap_or_else(report_balloon_event_fail),
                 _ => {
-                    warn!("Balloon: Spurious event received: {:?}", source);
+                    warn_rate_limited!("Balloon: Spurious event received: {:?}", source);
                 }
             };
         } else {
-            warn!(
+            warn_rate_limited!(
                 "Balloon: The device is not yet activated. Spurious event received: {:?}",
                 source
             );

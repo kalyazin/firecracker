@@ -27,7 +27,6 @@ use std::fmt::Debug;
 ///   - again, attempt to fetch any incoming packets queued by the backend into virtio RX
 ///     buffers.
 use event_manager::{EventOps, Events, MutEventSubscriber};
-use log::{error, warn};
 use vmm_sys_util::epoll::EventSet;
 
 use super::VsockBackend;
@@ -36,7 +35,7 @@ use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::queue::InvalidAvailIdx;
 use crate::devices::virtio::vsock::defs::VSOCK_NUM_QUEUES;
 use crate::devices::virtio::vsock::metrics::METRICS;
-use crate::logger::IncMetric;
+use crate::logger::{IncMetric, error_rate_limited, warn_rate_limited};
 
 impl<B> Vsock<B>
 where
@@ -51,13 +50,13 @@ where
     pub fn handle_rxq_event(&mut self, evset: EventSet) -> Vec<u16> {
         let mut used_queues = Vec::new();
         if evset != EventSet::IN {
-            warn!("vsock: rxq unexpected event {:?}", evset);
+            warn_rate_limited!("vsock: rxq unexpected event {:?}", evset);
             METRICS.rx_queue_event_fails.inc();
             return used_queues;
         }
 
         if let Err(err) = self.queue_events[RXQ_INDEX].read() {
-            error!("Failed to get vsock rx queue event: {:?}", err);
+            error_rate_limited!("Failed to get vsock rx queue event: {:?}", err);
             METRICS.rx_queue_event_fails.inc();
         } else if self.backend.has_pending_rx() {
             if self.process_rx().unwrap() {
@@ -71,13 +70,13 @@ where
     pub fn handle_txq_event(&mut self, evset: EventSet) -> Vec<u16> {
         let mut used_queues = Vec::new();
         if evset != EventSet::IN {
-            warn!("vsock: txq unexpected event {:?}", evset);
+            warn_rate_limited!("vsock: txq unexpected event {:?}", evset);
             METRICS.tx_queue_event_fails.inc();
             return used_queues;
         }
 
         if let Err(err) = self.queue_events[TXQ_INDEX].read() {
-            error!("Failed to get vsock tx queue event: {:?}", err);
+            error_rate_limited!("Failed to get vsock tx queue event: {:?}", err);
             METRICS.tx_queue_event_fails.inc();
         } else {
             if self.process_tx().unwrap() {
@@ -96,13 +95,13 @@ where
 
     pub fn handle_evq_event(&mut self, evset: EventSet) {
         if evset != EventSet::IN {
-            warn!("vsock: evq unexpected event {:?}", evset);
+            warn_rate_limited!("vsock: evq unexpected event {:?}", evset);
             METRICS.ev_queue_event_fails.inc();
             return;
         }
 
         if let Err(err) = self.queue_events[EVQ_INDEX].read() {
-            error!("Failed to consume vsock evq event: {:?}", err);
+            error_rate_limited!("Failed to consume vsock evq event: {:?}", err);
             METRICS.ev_queue_event_fails.inc();
         }
     }
@@ -132,28 +131,28 @@ where
             Self::PROCESS_RXQ,
             EventSet::IN,
         )) {
-            error!("Failed to register rx queue event: {}", err);
+            error_rate_limited!("Failed to register rx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.queue_events[TXQ_INDEX],
             Self::PROCESS_TXQ,
             EventSet::IN,
         )) {
-            error!("Failed to register tx queue event: {}", err);
+            error_rate_limited!("Failed to register tx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.queue_events[EVQ_INDEX],
             Self::PROCESS_EVQ,
             EventSet::IN,
         )) {
-            error!("Failed to register ev queue event: {}", err);
+            error_rate_limited!("Failed to register ev queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.backend,
             Self::PROCESS_NOTIFY_BACKEND,
             self.backend.get_polled_evset(),
         )) {
-            error!("Failed to register vsock backend event: {}", err);
+            error_rate_limited!("Failed to register vsock backend event: {}", err);
         }
     }
 
@@ -163,13 +162,13 @@ where
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to register activate event: {}", err);
+            error_rate_limited!("Failed to register activate event: {}", err);
         }
     }
 
     fn handle_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_evt.read() {
-            error!("Failed to consume net activate event: {:?}", err);
+            error_rate_limited!("Failed to consume net activate event: {:?}", err);
         }
         self.register_runtime_events(ops);
         if let Err(err) = ops.remove(Events::with_data(
@@ -177,7 +176,7 @@ where
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to un-register activate event: {}", err);
+            error_rate_limited!("Failed to un-register activate event: {}", err);
         }
     }
 }
@@ -204,14 +203,14 @@ where
                 }
                 Self::PROCESS_NOTIFY_BACKEND => self.notify_backend(evset).unwrap(),
                 _ => {
-                    warn!("Unexpected vsock event received: {:?}", source);
+                    warn_rate_limited!("Unexpected vsock event received: {:?}", source);
                     Vec::new()
                 }
             };
             self.signal_used_queues(&used_queues)
                 .expect("vsock: Could not trigger device interrupt");
         } else {
-            warn!(
+            warn_rate_limited!(
                 "Vsock: The device is not yet activated. Spurious event received: {:?}",
                 source
             );

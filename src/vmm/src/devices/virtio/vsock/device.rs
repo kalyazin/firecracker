@@ -24,7 +24,6 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use log::{error, info, warn};
 use vmm_sys_util::eventfd::EventFd;
 
 use super::super::super::DeviceError;
@@ -39,7 +38,7 @@ use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
 use crate::devices::virtio::vsock::VsockError;
 use crate::devices::virtio::vsock::metrics::METRICS;
 use crate::impl_device_type;
-use crate::logger::IncMetric;
+use crate::logger::{IncMetric, error_rate_limited, info_rate_limited, warn_rate_limited};
 use crate::utils::byte_order;
 use crate::vstate::memory::{Bytes, GuestMemoryMmap};
 
@@ -175,7 +174,7 @@ where
                             // bound as part of `commit_hdr()`.
                             Ok(()) => VSOCK_PKT_HDR_SIZE + self.rx_packet.hdr.len(),
                             Err(err) => {
-                                warn!(
+                                warn_rate_limited!(
                                     "vsock: Error writing packet header to guest memory: \
                                      {:?}.Discarding the package.",
                                     err
@@ -192,14 +191,14 @@ where
                     }
                 }
                 Err(err) => {
-                    warn!("vsock: RX queue error: {:?}. Discarding the package.", err);
+                    warn_rate_limited!("vsock: RX queue error: {:?}. Discarding the package.", err);
                     0
                 }
             };
 
             have_used = true;
             queue.add_used(index, used_len).unwrap_or_else(|err| {
-                error!("Failed to add available descriptor {}: {}", index, err)
+                error_rate_limited!("Failed to add available descriptor {}: {}", index, err)
             });
         }
         queue.advance_used_ring_idx();
@@ -223,10 +222,14 @@ where
             match self.tx_packet.parse(mem, head) {
                 Ok(()) => (),
                 Err(err) => {
-                    error!("vsock: error reading TX packet: {:?}", err);
+                    error_rate_limited!("vsock: error reading TX packet: {:?}", err);
                     have_used = true;
                     queue.add_used(index, 0).unwrap_or_else(|err| {
-                        error!("Failed to add available descriptor {}: {}", index, err);
+                        error_rate_limited!(
+                            "Failed to add available descriptor {}: {}",
+                            index,
+                            err
+                        );
                     });
                     continue;
                 }
@@ -239,7 +242,7 @@ where
 
             have_used = true;
             queue.add_used(index, 0).unwrap_or_else(|err| {
-                error!("Failed to add available descriptor {}: {}", index, err);
+                error_rate_limited!("Failed to add available descriptor {}: {}", index, err);
             });
         }
         queue.advance_used_ring_idx();
@@ -261,10 +264,12 @@ where
         })?;
 
         mem.write_obj::<u32>(VIRTIO_VSOCK_EVENT_TRANSPORT_RESET, head.addr)
-            .unwrap_or_else(|err| error!("Failed to write virtio vsock reset event: {:?}", err));
+            .unwrap_or_else(|err| {
+                error_rate_limited!("Failed to write virtio vsock reset event: {:?}", err)
+            });
 
         queue.add_used(head.index, head.len).unwrap_or_else(|err| {
-            error!("Failed to add used descriptor {}: {}", head.index, err);
+            error_rate_limited!("Failed to add used descriptor {}: {}", head.index, err);
         });
         queue.advance_used_ring_idx();
 
@@ -331,7 +336,7 @@ where
             }
             _ => {
                 METRICS.cfg_fails.inc();
-                warn!(
+                warn_rate_limited!(
                     "vsock: virtio-vsock received invalid read request of {} bytes at offset {}",
                     data.len(),
                     offset
@@ -342,7 +347,7 @@ where
 
     fn write_config(&mut self, offset: u64, data: &[u8]) {
         METRICS.cfg_fails.inc();
-        warn!(
+        warn_rate_limited!(
             "vsock: guest driver attempted to write device config (offset={:#x}, len={:#x})",
             offset,
             data.len()
@@ -389,7 +394,7 @@ where
         // The only reason we still `kick` it is to make guest process
         // `TRANSPORT_RESET_EVENT` event we sent during snapshot creation.
         if self.is_activated() {
-            info!(
+            info_rate_limited!(
                 "[{:?}:{}] signaling event queue",
                 self.device_type(),
                 self.id()
@@ -403,7 +408,7 @@ where
         // is activated.
         if self.is_activated() {
             self.send_transport_reset_event().unwrap_or_else(|err| {
-                error!("Failed to send reset transport event: {:?}", err);
+                error_rate_limited!("Failed to send reset transport event: {:?}", err);
             });
         }
     }

@@ -17,7 +17,7 @@ use vm_memory::GuestAddress;
 use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::queue::Queue;
 use crate::devices::virtio::transport::pci::device::VIRTQ_MSI_NO_VECTOR;
-use crate::logger::warn;
+use crate::logger::warn_rate_limited;
 
 pub const VIRTIO_PCI_COMMON_CONFIG_ID: &str = "virtio_pci_common_config";
 
@@ -108,7 +108,7 @@ impl VirtioPciCommonConfig {
                 let v = self.read_common_config_dword(offset, device);
                 LittleEndian::write_u32(data, v);
             }
-            _ => warn!(
+            _ => warn_rate_limited!(
                 "pci: invalid data length for virtio read: len {}",
                 data.len()
             ),
@@ -126,7 +126,7 @@ impl VirtioPciCommonConfig {
                 device.lock().unwrap().queues_mut(),
             ),
             4 => self.write_common_config_dword(offset, LittleEndian::read_u32(data), device),
-            _ => warn!(
+            _ => warn_rate_limited!(
                 "pci: invalid data length for virtio write: len {}",
                 data.len()
             ),
@@ -139,7 +139,7 @@ impl VirtioPciCommonConfig {
             0x14 => self.driver_status,
             0x15 => self.config_generation,
             _ => {
-                warn!("pci: invalid virtio config byte read: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio config byte read: 0x{:x}", offset);
                 0
             }
         }
@@ -149,7 +149,7 @@ impl VirtioPciCommonConfig {
         match offset {
             0x14 => self.driver_status = value,
             _ => {
-                warn!("pci: invalid virtio config byte write: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio config byte write: 0x{:x}", offset);
             }
         }
     }
@@ -176,7 +176,7 @@ impl VirtioPciCommonConfig {
             0x1c => u16::from(self.with_queue(queues, |q| q.ready).unwrap_or(false)),
             0x1e => self.queue_select, // notify_off
             _ => {
-                warn!("pci: invalid virtio register word read: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio register word read: 0x{:x}", offset);
                 0
             }
         }
@@ -222,7 +222,7 @@ impl VirtioPciCommonConfig {
                 }
             }),
             _ => {
-                warn!("pci: invalid virtio register word write: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio register word write: 0x{:x}", offset);
             }
         }
     }
@@ -285,7 +285,7 @@ impl VirtioPciCommonConfig {
                 .unwrap_or_default()
             }
             _ => {
-                warn!("pci: invalid virtio register dword read: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio register dword read: 0x{:x}", offset);
                 0
             }
         }
@@ -330,7 +330,7 @@ impl VirtioPciCommonConfig {
                 hi(&mut q.used_ring_address, value)
             }),
             _ => {
-                warn!("pci: invalid virtio register dword write: 0x{:x}", offset);
+                warn_rate_limited!("pci: invalid virtio register dword write: 0x{:x}", offset);
             }
         }
     }

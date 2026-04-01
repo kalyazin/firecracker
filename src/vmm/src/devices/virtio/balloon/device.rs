@@ -5,7 +5,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use utils::time::TimerFd;
 use vmm_sys_util::eventfd::EventFd;
@@ -32,7 +31,10 @@ use crate::devices::virtio::device::{ActiveState, VirtioDeviceType};
 use crate::devices::virtio::generated::virtio_config::VIRTIO_F_VERSION_1;
 use crate::devices::virtio::queue::InvalidAvailIdx;
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
-use crate::logger::{IncMetric, log_dev_preview_warning};
+use crate::logger::{
+    IncMetric, debug_rate_limited, error_rate_limited, info_rate_limited, log_dev_preview_warning,
+    warn_rate_limited,
+};
 use crate::utils::u64_to_usize;
 use crate::vstate::memory::{
     Address, ByteValued, Bytes, GuestAddress, GuestMemoryExtension, GuestMemoryMmap,
@@ -237,7 +239,7 @@ impl BalloonStats {
             VIRTIO_BALLOON_S_DIRECT_RECLAIM => self.direct_reclaim = val,
             tag => {
                 METRICS.stats_update_fails.inc();
-                debug!("balloon: unknown stats update tag: {tag}");
+                debug_rate_limited!("balloon: unknown stats update tag: {tag}");
             }
         }
     }
@@ -404,7 +406,7 @@ impl Balloon {
                 if !head.is_write_only() && len.is_multiple_of(SIZE_OF_U32) {
                     // Check descriptor pfn count.
                     if len > max_len {
-                        error!(
+                        error_rate_limited!(
                             "Inflate descriptor has bogus page count {} > {}, skipping.",
                             len / SIZE_OF_U32,
                             MAX_PAGES_IN_DESC
@@ -455,7 +457,7 @@ impl Balloon {
                     guest_addr,
                     usize::try_from(range_len).unwrap() << VIRTIO_BALLOON_PFN_SHIFT,
                 ) {
-                    error!("Error removing memory range: {:?}", err);
+                    error_rate_limited!("Error removing memory range: {:?}", err);
                 }
             }
         }
@@ -496,7 +498,9 @@ impl Balloon {
             if let Some(prev_stats_desc) = self.stats_desc_index {
                 // We shouldn't ever have an extra buffer if the driver follows
                 // the protocol, but return it if we find one.
-                error!("balloon: driver is not compliant, more than one stats buffer received");
+                error_rate_limited!(
+                    "balloon: driver is not compliant, more than one stats buffer received"
+                );
                 self.queues[STATS_INDEX].add_used(prev_stats_desc, 0)?;
                 self.queues[STATS_INDEX].advance_used_ring_idx();
                 self.signal_used_queue(STATS_INDEX)?;
@@ -508,9 +512,10 @@ impl Balloon {
             // so that the stats request/response protocol is preserved and
             // trigger_stats_update can return it to the guest later.
             if head.len > MAX_STATS_DESC_LEN {
-                warn!(
+                warn_rate_limited!(
                     "balloon: stats descriptor too large: {} > {}, skipping",
-                    head.len, MAX_STATS_DESC_LEN
+                    head.len,
+                    MAX_STATS_DESC_LEN
                 );
                 self.stats_desc_index = Some(head.index);
                 continue;
@@ -571,7 +576,7 @@ impl Balloon {
 
                     // We don't expect this from the driver, but lets treat as a stop
                     if cmd == FREE_PAGE_HINT_DONE {
-                        warn!("balloon hinting: Unexpected cmd from guest: {cmd}");
+                        warn_rate_limited!("balloon hinting: Unexpected cmd from guest: {cmd}");
                         complete = true;
                     }
 
@@ -584,19 +589,21 @@ impl Balloon {
                 }
 
                 let Some(chain_cmd) = self.hinting_state.guest_cmd else {
-                    warn!("balloon hinting: received range with no command id.");
+                    warn_rate_limited!("balloon hinting: received range with no command id.");
                     continue;
                 };
 
                 if chain_cmd != host_cmd {
-                    info!("balloon hinting: Received chain from previous command ignoring.");
+                    info_rate_limited!(
+                        "balloon hinting: Received chain from previous command ignoring."
+                    );
                     continue;
                 }
 
                 METRICS.free_page_hint_count.inc();
                 if let Err(err) = mem.discard_range(desc.addr, desc.len as usize) {
                     METRICS.free_page_hint_fails.inc();
-                    error!("balloon hinting: failed to remove range: {err:?}");
+                    error_rate_limited!("balloon hinting: failed to remove range: {err:?}");
                 } else {
                     METRICS.free_page_hint_freed.add(desc.len as u64);
                 }
@@ -638,7 +645,7 @@ impl Balloon {
                 METRICS.free_page_report_count.inc();
                 if let Err(err) = mem.discard_range(desc.addr, desc.len as usize) {
                     METRICS.free_page_report_fails.inc();
-                    error!("balloon: failed to remove range: {err:?}");
+                    error_rate_limited!("balloon: failed to remove range: {err:?}");
                 } else {
                     METRICS.free_page_report_freed.add(desc.len as u64);
                 }
@@ -703,7 +710,7 @@ impl Balloon {
             self.queues[STATS_INDEX].advance_used_ring_idx();
             self.signal_used_queue(STATS_INDEX)
         } else {
-            error!("Failed to update balloon stats, missing descriptor.");
+            error_rate_limited!("Failed to update balloon stats, missing descriptor.");
             Ok(())
         }
     }
@@ -927,7 +934,7 @@ impl VirtioDevice for Balloon {
             let len = config_space_bytes.len().min(data.len());
             data[..len].copy_from_slice(&config_space_bytes[..len]);
         } else {
-            error!("Failed to read config space");
+            error_rate_limited!("Failed to read config space");
         }
     }
 
@@ -939,7 +946,7 @@ impl VirtioDevice for Balloon {
             .zip(end)
             .and_then(|(start, end)| config_space_bytes.get_mut(start..end))
         else {
-            error!("Failed to write config space");
+            error_rate_limited!("Failed to write config space");
             return;
         };
 
@@ -977,7 +984,7 @@ impl VirtioDevice for Balloon {
     fn kick(&mut self) {
         if self.is_activated() {
             if self.free_page_hinting() {
-                info!(
+                info_rate_limited!(
                     "[{:?}:{}] resetting free page hinting to DONE",
                     self.device_type(),
                     self.id()

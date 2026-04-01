@@ -14,7 +14,6 @@ use std::{fmt, io, thread};
 use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::{VcpuExit, VcpuFd};
 use libc::{c_int, c_void, siginfo_t};
-use log::{error, info, warn};
 use vmm_sys_util::errno;
 use vmm_sys_util::eventfd::EventFd;
 
@@ -23,7 +22,7 @@ pub use crate::arch::{KvmVcpu, KvmVcpuConfigureError, KvmVcpuError, Peripherals,
 use crate::cpu_config::templates::{CpuConfiguration, GuestConfigError};
 #[cfg(feature = "gdb")]
 use crate::gdb::target::{GdbTargetError, get_raw_tid};
-use crate::logger::{IncMetric, METRICS};
+use crate::logger::{IncMetric, METRICS, error_rate_limited, info_rate_limited, warn_rate_limited};
 use crate::seccomp::{BpfProgram, BpfProgramRef};
 use crate::utils::signal::{Killable, register_signal_handler, sigrtmin};
 use crate::utils::sm::StateMachine;
@@ -300,7 +299,7 @@ impl Vcpu {
             // Paused ---- Resume ----> Running
             Ok(VcpuEvent::Resume) => {
                 if self.kvm_vcpu.fd.get_kvm_run().immediate_exit == 1u8 {
-                    warn!(
+                    warn_rate_limited!(
                         "Received a VcpuEvent::Resume message with immediate_exit enabled. \
                          immediate_exit was disabled before proceeding"
                     );
@@ -366,7 +365,7 @@ impl Vcpu {
     fn exit(&mut self, exit_code: FcExitCode) -> StateMachine<Self> {
         if let Err(err) = self.exit_evt.write(1) {
             METRICS.vcpu.failures.inc();
-            error!("Failed signaling vcpu exit event: {}", err);
+            error_rate_limited!("Failed signaling vcpu exit event: {}", err);
         }
         // From this state we only accept going to finished.
         loop {
@@ -386,7 +385,9 @@ impl Vcpu {
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     pub fn run_emulation(&mut self) -> Result<VcpuEmulation, VcpuError> {
         if self.kvm_vcpu.fd.get_kvm_run().immediate_exit == 1u8 {
-            warn!("Requested a vCPU run with immediate_exit enabled. The operation was skipped");
+            warn_rate_limited!(
+                "Requested a vCPU run with immediate_exit enabled. The operation was skipped"
+            );
             self.kvm_vcpu.fd.set_kvm_immediate_exit(0);
             return Ok(VcpuEmulation::Interrupted);
         }
@@ -424,7 +425,10 @@ fn handle_kvm_exit(
                 if let Some(mmio_bus) = &peripherals.mmio_bus {
                     let _metric = METRICS.vcpu.exit_mmio_read_agg.record_latency_metrics();
                     if let Err(err) = mmio_bus.read(addr, data) {
-                        warn!("Invalid MMIO read @ {addr:#x}:{:#x}: {err}", data.len());
+                        warn_rate_limited!(
+                            "Invalid MMIO read @ {addr:#x}:{:#x}: {err}",
+                            data.len()
+                        );
                     }
                     METRICS.vcpu.exit_mmio_read.inc();
                 }
@@ -434,7 +438,10 @@ fn handle_kvm_exit(
                 if let Some(mmio_bus) = &peripherals.mmio_bus {
                     let _metric = METRICS.vcpu.exit_mmio_write_agg.record_latency_metrics();
                     if let Err(err) = mmio_bus.write(addr, data) {
-                        warn!("Invalid MMIO read @ {addr:#x}:{:#x}: {err}", data.len());
+                        warn_rate_limited!(
+                            "Invalid MMIO read @ {addr:#x}:{:#x}: {err}",
+                            data.len()
+                        );
                     }
                     METRICS.vcpu.exit_mmio_write.inc();
                 }
@@ -445,9 +452,10 @@ fn handle_kvm_exit(
             VcpuExit::FailEntry(hardware_entry_failure_reason, cpu) => {
                 // Hardware entry failure.
                 METRICS.vcpu.failures.inc();
-                error!(
+                error_rate_limited!(
                     "Received KVM_EXIT_FAIL_ENTRY signal: {} on cpu {}",
-                    hardware_entry_failure_reason, cpu
+                    hardware_entry_failure_reason,
+                    cpu
                 );
                 Err(VcpuError::FaultyKvmExit(format!(
                     "{:?}",
@@ -457,7 +465,7 @@ fn handle_kvm_exit(
             VcpuExit::InternalError => {
                 // Failure from the Linux KVM subsystem rather than from the hardware.
                 METRICS.vcpu.failures.inc();
-                error!("Received KVM_EXIT_INTERNAL_ERROR signal");
+                error_rate_limited!("Received KVM_EXIT_INTERNAL_ERROR signal");
                 Err(VcpuError::FaultyKvmExit(format!(
                     "{:?}",
                     VcpuExit::InternalError
@@ -465,17 +473,19 @@ fn handle_kvm_exit(
             }
             VcpuExit::SystemEvent(event_type, event_flags) => match event_type {
                 KVM_SYSTEM_EVENT_RESET | KVM_SYSTEM_EVENT_SHUTDOWN => {
-                    info!(
+                    info_rate_limited!(
                         "Received KVM_SYSTEM_EVENT: type: {}, event: {:?}",
-                        event_type, event_flags
+                        event_type,
+                        event_flags
                     );
                     Ok(VcpuEmulation::Stopped)
                 }
                 _ => {
                     METRICS.vcpu.failures.inc();
-                    error!(
+                    error_rate_limited!(
                         "Received KVM_SYSTEM_EVENT signal type: {}, flag: {:?}",
-                        event_type, event_flags
+                        event_type,
+                        event_flags
                     );
                     Err(VcpuError::FaultyKvmExit(format!(
                         "{:?}",
@@ -494,7 +504,9 @@ fn handle_kvm_exit(
             libc::EAGAIN => Ok(VcpuEmulation::Handled),
             libc::ENOSYS => {
                 METRICS.vcpu.failures.inc();
-                error!("Received ENOSYS error because KVM failed to emulate an instruction.");
+                error_rate_limited!(
+                    "Received ENOSYS error because KVM failed to emulate an instruction."
+                );
                 Err(VcpuError::FaultyKvmExit(
                     "Received ENOSYS error because KVM failed to emulate an instruction."
                         .to_string(),
@@ -502,7 +514,7 @@ fn handle_kvm_exit(
             }
             _ => {
                 METRICS.vcpu.failures.inc();
-                error!("Failure during vcpu run: {}", err);
+                error_rate_limited!("Failure during vcpu run: {}", err);
                 Err(VcpuError::FaultyKvmExit(format!("{}", err)))
             }
         },

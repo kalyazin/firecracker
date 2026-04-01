@@ -7,7 +7,7 @@ use vmm_sys_util::epoll::EventSet;
 use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::mem::MEM_QUEUE;
 use crate::devices::virtio::mem::device::VirtioMem;
-use crate::logger::{error, warn};
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl VirtioMem {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -19,7 +19,7 @@ impl VirtioMem {
             Self::PROCESS_MEM_QUEUE,
             EventSet::IN,
         )) {
-            error!("virtio-mem: Failed to register queue event: {err}");
+            error_rate_limited!("virtio-mem: Failed to register queue event: {err}");
         }
     }
 
@@ -29,13 +29,13 @@ impl VirtioMem {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("virtio-mem: Failed to register activate event: {err}");
+            error_rate_limited!("virtio-mem: Failed to register activate event: {err}");
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_event().read() {
-            error!("virtio-mem: Failed to consume activate event: {err}");
+            error_rate_limited!("virtio-mem: Failed to consume activate event: {err}");
         }
 
         // Register runtime events
@@ -47,7 +47,7 @@ impl VirtioMem {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("virtio-mem: Failed to un-register activate event: {err}");
+            error_rate_limited!("virtio-mem: Failed to un-register activate event: {err}");
         }
     }
 }
@@ -70,12 +70,16 @@ impl MutEventSubscriber for VirtioMem {
         let source = events.data();
 
         if !event_set.contains(EventSet::IN) {
-            warn!("virtio-mem: Received unknown event: {event_set:?} from source {source}");
+            warn_rate_limited!(
+                "virtio-mem: Received unknown event: {event_set:?} from source {source}"
+            );
             return;
         }
 
         if !self.is_activated() {
-            warn!("virtio-mem: The device is not activated yet. Spurious event received: {source}");
+            warn_rate_limited!(
+                "virtio-mem: The device is not activated yet. Spurious event received: {source}"
+            );
             return;
         }
 
@@ -84,7 +88,7 @@ impl MutEventSubscriber for VirtioMem {
             Self::PROCESS_MEM_QUEUE => self.process_mem_queue_event(),
 
             _ => {
-                warn!("virtio-mem: Unknown event received: {source}");
+                warn_rate_limited!("virtio-mem: Unknown event received: {source}");
             }
         }
     }

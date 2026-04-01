@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering}
 use std::sync::{Arc, Barrier, Mutex};
 
 use kvm_ioctls::{IoEventAddress, NoDatamatch};
-use log::warn;
 use pci::{
     PciBdf, PciCapabilityId, PciClassCode, PciMassStorageSubclass, PciNetworkControllerSubclass,
     PciSubclass,
@@ -35,7 +34,7 @@ use crate::devices::virtio::transport::pci::common_config::{
     VirtioPciCommonConfig, VirtioPciCommonConfigState,
 };
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
-use crate::logger::{debug, error};
+use crate::logger::{debug_rate_limited, error_rate_limited, warn_rate_limited};
 use crate::pci::configuration::{PciCapability, PciConfiguration, PciConfigurationState};
 use crate::pci::msix::{MsixCap, MsixConfig, MsixConfigState};
 use crate::pci::{BarReprogrammingParams, DeviceRelocationError, PciDevice};
@@ -547,7 +546,7 @@ impl VirtioPciDevice {
         let data_len = data.len();
         let cap_len = cap_slice.len();
         if offset + data_len > cap_len {
-            error!("Failed to read cap_pci_cfg from config space");
+            error_rate_limited!("Failed to read cap_pci_cfg from config space");
             return;
         }
 
@@ -574,7 +573,7 @@ impl VirtioPciDevice {
         let data_len = data.len();
         let cap_len = cap_slice.len();
         if offset + data_len > cap_len {
-            error!("Failed to write cap_pci_cfg to config space");
+            error_rate_limited!("Failed to write cap_pci_cfg to config space");
             return None;
         }
 
@@ -809,7 +808,7 @@ impl PciDevice for VirtioPciDevice {
             }
             o if (ISR_CONFIG_BAR_OFFSET..ISR_CONFIG_BAR_OFFSET + ISR_CONFIG_SIZE).contains(&o) => {
                 // We don't actually support legacy INT#x interrupts for VirtIO PCI devices
-                warn!("pci: read access to unsupported ISR status field");
+                warn_rate_limited!("pci: read access to unsupported ISR status field");
                 data.fill(0);
             }
             o if (DEVICE_CONFIG_BAR_OFFSET..DEVICE_CONFIG_BAR_OFFSET + DEVICE_CONFIG_SIZE)
@@ -822,7 +821,7 @@ impl PciDevice for VirtioPciDevice {
                 .contains(&o) =>
             {
                 // Handled with ioeventfds.
-                warn!("pci: unexpected read to notification BAR. Offset {o:#x}");
+                warn_rate_limited!("pci: unexpected read to notification BAR. Offset {o:#x}");
             }
             o if (MSIX_TABLE_BAR_OFFSET..MSIX_TABLE_BAR_OFFSET + MSIX_TABLE_SIZE).contains(&o) => {
                 if let Some(interrupt) = &self.virtio_interrupt {
@@ -854,7 +853,7 @@ impl PciDevice for VirtioPciDevice {
             }
             o if (ISR_CONFIG_BAR_OFFSET..ISR_CONFIG_BAR_OFFSET + ISR_CONFIG_SIZE).contains(&o) => {
                 // We don't actually support legacy INT#x interrupts for VirtIO PCI devices
-                warn!("pci: access to unsupported ISR status field");
+                warn_rate_limited!("pci: access to unsupported ISR status field");
             }
             o if (DEVICE_CONFIG_BAR_OFFSET..DEVICE_CONFIG_BAR_OFFSET + DEVICE_CONFIG_SIZE)
                 .contains(&o) =>
@@ -866,7 +865,7 @@ impl PciDevice for VirtioPciDevice {
                 .contains(&o) =>
             {
                 // Handled with ioeventfds.
-                warn!("pci: unexpected write to notification BAR. Offset {o:#x}");
+                warn_rate_limited!("pci: unexpected write to notification BAR. Offset {o:#x}");
             }
             o if (MSIX_TABLE_BAR_OFFSET..MSIX_TABLE_BAR_OFFSET + MSIX_TABLE_SIZE).contains(&o) => {
                 if let Some(interrupt) = &self.virtio_interrupt {
@@ -891,7 +890,7 @@ impl PciDevice for VirtioPciDevice {
 
         // Try and activate the device if the driver status has changed
         if self.needs_activation() {
-            debug!("Activating device");
+            debug_rate_limited!("Activating device");
             let interrupt = Arc::clone(self.virtio_interrupt.as_ref().unwrap());
             match self
                 .virtio_device()
@@ -901,7 +900,7 @@ impl PciDevice for VirtioPciDevice {
             {
                 Ok(()) => self.device_activated.store(true, Ordering::SeqCst),
                 Err(err) => {
-                    error!("Error activating device: {err:?}");
+                    error_rate_limited!("Error activating device: {err:?}");
 
                     // Section 2.1.2 of the specification states that we need to send a device
                     // configuration change interrupt
@@ -931,7 +930,9 @@ impl PciDevice for VirtioPciDevice {
                     self.common_config.queue_select = 0;
                 }
                 None => {
-                    error!("Attempt to reset device when not implemented in underlying device");
+                    error_rate_limited!(
+                        "Attempt to reset device when not implemented in underlying device"
+                    );
                     // TODO: currently we don't support device resetting, but we still
                     // follow the spec and set the status field to 0.
                     self.common_config.driver_status = DEVICE_INIT;

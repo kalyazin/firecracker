@@ -21,7 +21,7 @@ use crate::arch::aarch64::kvm::OptionalCapabilities;
 use crate::arch::aarch64::regs::{Aarch64RegisterVec, KVM_REG_ARM64_SVE_VLS};
 use crate::cpu_config::aarch64::custom_cpu_template::VcpuFeatures;
 use crate::cpu_config::templates::CpuConfiguration;
-use crate::logger::{IncMetric, METRICS, error};
+use crate::logger::{IncMetric, METRICS, error_rate_limited};
 use crate::vcpu::{VcpuConfig, VcpuError};
 use crate::vstate::bus::Bus;
 use crate::vstate::memory::{Address, GuestMemoryMmap};
@@ -503,7 +503,7 @@ impl Peripherals {
         METRICS.vcpu.failures.inc();
         // TODO: Are we sure we want to finish running a vcpu upon
         // receiving a vm exit that is not necessarily an error?
-        error!("Unexpected exit reason on vcpu run: {:?}", exit);
+        error_rate_limited!("Unexpected exit reason on vcpu run: {:?}", exit);
         Err(VcpuError::UnhandledKvmExit(format!("{:?}", exit)))
     }
 }

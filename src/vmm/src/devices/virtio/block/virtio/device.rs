@@ -34,7 +34,7 @@ use crate::devices::virtio::generated::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use crate::devices::virtio::queue::{InvalidAvailIdx, Queue};
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
 use crate::impl_device_type;
-use crate::logger::{IncMetric, error, warn};
+use crate::logger::{IncMetric, error_rate_limited, warn_rate_limited};
 use crate::rate_limiter::{BucketUpdate, RateLimiter};
 use crate::utils::u64_to_usize;
 use crate::vmm_config::RateLimiterConfig;
@@ -79,10 +79,11 @@ impl DiskProperties {
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.
         if disk_size % u64::from(SECTOR_SIZE) != 0 {
-            warn!(
+            warn_rate_limited!(
                 "Disk size {} is not a multiple of sector size {}; the remainder will not be \
                  visible to the guest.",
-                disk_size, SECTOR_SIZE
+                disk_size,
+                SECTOR_SIZE
             );
         }
 
@@ -145,7 +146,7 @@ impl DiskProperties {
         let mut default_id = [0; VIRTIO_BLK_ID_BYTES as usize];
         match Self::build_device_id(disk_file) {
             Err(_) => {
-                warn!("Could not generate device id. We'll use a default.");
+                warn_rate_limited!("Could not generate device id. We'll use a default.");
             }
             Ok(disk_id_string) => {
                 // The kernel only knows to read a maximum of VIRTIO_BLK_ID_BYTES.
@@ -272,7 +273,7 @@ macro_rules! unwrap_async_file_engine_or_return {
         match $file_engine {
             FileEngine::Async(engine) => engine,
             FileEngine::Sync(_) => {
-                error!("The block device doesn't use an async IO engine");
+                error_rate_limited!("The block device doesn't use an async IO engine");
                 return;
             }
         }
@@ -360,7 +361,7 @@ impl VirtioBlock {
     pub(crate) fn process_queue_event(&mut self) {
         self.metrics.queue_event_count.inc();
         if let Err(err) = self.queue_evts[0].read() {
-            error!("Failed to get queue event: {:?}", err);
+            error_rate_limited!("Failed to get queue event: {:?}", err);
             self.metrics.event_fails.inc();
         } else if self.rate_limiter.is_blocked() {
             self.metrics.rate_limiter_throttled_events.inc();
@@ -414,7 +415,10 @@ impl VirtioBlock {
                         )
                     }
                     Err(err) => {
-                        error!("Failed to parse available descriptor chain: {:?}", err);
+                        error_rate_limited!(
+                            "Failed to parse available descriptor chain: {:?}",
+                            err
+                        );
                         self.metrics.execute_fails.inc();
                         ProcessingResult::Executed(FinishedRequest {
                             num_bytes_to_mem: 0,
@@ -435,9 +439,10 @@ impl VirtioBlock {
                     queue
                         .add_used(head.index, finished.num_bytes_to_mem)
                         .unwrap_or_else(|err| {
-                            error!(
+                            error_rate_limited!(
                                 "Failed to add available descriptor head {}: {}",
-                                head.index, err
+                                head.index,
+                                err
                             )
                         });
                 }
@@ -457,7 +462,7 @@ impl VirtioBlock {
         if let FileEngine::Async(ref mut engine) = self.disk.file_engine
             && let Err(err) = engine.kick_submission_queue()
         {
-            error!("BlockError submitting pending block requests: {:?}", err);
+            error_rate_limited!("BlockError submitting pending block requests: {:?}", err);
         }
 
         if !used_any {
@@ -477,7 +482,7 @@ impl VirtioBlock {
         loop {
             match engine.pop(&active_state.mem) {
                 Err(error) => {
-                    error!("Failed to read completed io_uring entry: {:?}", error);
+                    error_rate_limited!("Failed to read completed io_uring entry: {:?}", error);
                     break;
                 }
                 Ok(None) => break,
@@ -498,9 +503,10 @@ impl VirtioBlock {
                     queue
                         .add_used(finished.desc_idx, finished.num_bytes_to_mem)
                         .unwrap_or_else(|err| {
-                            error!(
+                            error_rate_limited!(
                                 "Failed to add available descriptor head {}: {}",
-                                finished.desc_idx, err
+                                finished.desc_idx,
+                                err
                             )
                         });
                 }
@@ -522,7 +528,7 @@ impl VirtioBlock {
         let engine = unwrap_async_file_engine_or_return!(&mut self.disk.file_engine);
 
         if let Err(err) = engine.completion_evt().read() {
-            error!("Failed to get async completion event: {:?}", err);
+            error_rate_limited!("Failed to get async completion event: {:?}", err);
         } else {
             self.process_async_completion_queue();
 
@@ -564,7 +570,7 @@ impl VirtioBlock {
 
     fn drain_and_flush(&mut self, discard: bool) {
         if let Err(err) = self.disk.file_engine.drain_and_flush(discard) {
-            error!("Failed to drain ops and flush block data: {:?}", err);
+            error_rate_limited!("Failed to drain ops and flush block data: {:?}", err);
         }
     }
 
@@ -625,7 +631,7 @@ impl VirtioDevice for VirtioBlock {
             let len = config_space_bytes.len().min(data.len());
             data[..len].copy_from_slice(&config_space_bytes[..len]);
         } else {
-            error!("Failed to read config space");
+            error_rate_limited!("Failed to read config space");
             self.metrics.cfg_fails.inc();
         }
     }
@@ -638,7 +644,7 @@ impl VirtioDevice for VirtioBlock {
             .zip(end)
             .and_then(|(start, end)| config_space_bytes.get_mut(start..end))
         else {
-            error!("Failed to write config space");
+            error_rate_limited!("Failed to write config space");
             self.metrics.cfg_fails.inc();
             return;
         };
@@ -681,7 +687,7 @@ impl Drop for VirtioBlock {
         match self.cache_type {
             CacheType::Unsafe => {
                 if let Err(err) = self.disk.file_engine.drain(true) {
-                    error!("Failed to drain ops on drop: {:?}", err);
+                    error_rate_limited!("Failed to drain ops on drop: {:?}", err);
                 }
             }
             CacheType::Writeback => {

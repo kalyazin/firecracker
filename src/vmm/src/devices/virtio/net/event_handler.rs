@@ -7,7 +7,7 @@ use vmm_sys_util::epoll::EventSet;
 use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::net::device::Net;
 use crate::devices::virtio::net::{RX_INDEX, TX_INDEX};
-use crate::logger::{IncMetric, error, warn};
+use crate::logger::{IncMetric, error_rate_limited, warn_rate_limited};
 
 impl Net {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -23,35 +23,35 @@ impl Net {
             Self::PROCESS_VIRTQ_RX,
             EventSet::IN,
         )) {
-            error!("Failed to register rx queue event: {}", err);
+            error_rate_limited!("Failed to register rx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.queue_evts[TX_INDEX],
             Self::PROCESS_VIRTQ_TX,
             EventSet::IN,
         )) {
-            error!("Failed to register tx queue event: {}", err);
+            error_rate_limited!("Failed to register tx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.rx_rate_limiter,
             Self::PROCESS_RX_RATE_LIMITER,
             EventSet::IN,
         )) {
-            error!("Failed to register rx queue event: {}", err);
+            error_rate_limited!("Failed to register rx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.tx_rate_limiter,
             Self::PROCESS_TX_RATE_LIMITER,
             EventSet::IN,
         )) {
-            error!("Failed to register tx queue event: {}", err);
+            error_rate_limited!("Failed to register tx queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.tap,
             Self::PROCESS_TAP_RX,
             EventSet::IN | EventSet::EDGE_TRIGGERED,
         )) {
-            error!("Failed to register tap event: {}", err);
+            error_rate_limited!("Failed to register tap event: {}", err);
         }
     }
 
@@ -61,13 +61,13 @@ impl Net {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to register activate event: {}", err);
+            error_rate_limited!("Failed to register activate event: {}", err);
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_evt.read() {
-            error!("Failed to consume net activate event: {:?}", err);
+            error_rate_limited!("Failed to consume net activate event: {:?}", err);
         }
         self.register_runtime_events(ops);
         if let Err(err) = ops.remove(Events::with_data(
@@ -75,7 +75,7 @@ impl Net {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to un-register activate event: {}", err);
+            error_rate_limited!("Failed to un-register activate event: {}", err);
         }
     }
 }
@@ -89,9 +89,10 @@ impl MutEventSubscriber for Net {
         // to handle errors in devices.
         let supported_events = EventSet::IN;
         if !supported_events.contains(event_set) {
-            warn!(
+            warn_rate_limited!(
                 "Received unknown event: {:?} from source: {:?}",
-                event_set, source
+                event_set,
+                source
             );
             return;
         }
@@ -105,12 +106,12 @@ impl MutEventSubscriber for Net {
                 Self::PROCESS_RX_RATE_LIMITER => self.process_rx_rate_limiter_event(),
                 Self::PROCESS_TX_RATE_LIMITER => self.process_tx_rate_limiter_event(),
                 _ => {
-                    warn!("Net: Spurious event received: {:?}", source);
+                    warn_rate_limited!("Net: Spurious event received: {:?}", source);
                     self.metrics.event_fails.inc();
                 }
             }
         } else {
-            warn!(
+            warn_rate_limited!(
                 "Net: The device is not yet activated. Spurious event received: {:?}",
                 source
             );

@@ -21,7 +21,7 @@ use crate::devices::virtio::pmem::PMEM_QUEUE_SIZE;
 use crate::devices::virtio::pmem::metrics::{PmemMetrics, PmemMetricsPerDevice};
 use crate::devices::virtio::queue::{DescriptorChain, InvalidAvailIdx, Queue, QueueError};
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
-use crate::logger::{IncMetric, error, info};
+use crate::logger::{IncMetric, error_rate_limited, info_rate_limited};
 use crate::utils::{align_up, u64_to_usize};
 use crate::vmm_config::pmem::PmemConfig;
 use crate::vstate::memory::{ByteValued, Bytes, GuestMemoryMmap, GuestMmapRegion};
@@ -254,13 +254,13 @@ impl Pmem {
             let add_result = match self.process_chain(head) {
                 Ok(()) => self.queues[0].add_used(head.index, 4),
                 Err(err) => {
-                    error!("pmem: {err}");
+                    error_rate_limited!("pmem: {err}");
                     self.metrics.event_fails.inc();
                     self.queues[0].add_used(head.index, 0)
                 }
             };
             if let Err(err) = add_result {
-                error!("pmem: {err}");
+                error_rate_limited!("pmem: {err}");
                 self.metrics.event_fails.inc();
                 break;
             }
@@ -272,7 +272,7 @@ impl Pmem {
                 .interrupt
                 .trigger(VirtioInterruptType::Queue(0))
                 .unwrap_or_else(|err| {
-                    error!("pmem: {err}");
+                    error_rate_limited!("pmem: {err}");
                     self.metrics.event_fails.inc();
                 });
         }
@@ -306,7 +306,7 @@ impl Pmem {
                 libc::MS_SYNC,
             );
             if ret < 0 {
-                error!("pmem: Unable to msync the file. Error: {}", ret);
+                error_rate_limited!("pmem: Unable to msync the file. Error: {}", ret);
                 result = FAILURE;
             }
         }
@@ -317,13 +317,13 @@ impl Pmem {
     pub fn process_queue(&mut self) {
         self.metrics.queue_event_count.inc();
         if let Err(err) = self.queue_events[0].read() {
-            error!("pmem: Failed to get queue event: {err:?}");
+            error_rate_limited!("pmem: Failed to get queue event: {err:?}");
             self.metrics.event_fails.inc();
             return;
         }
 
         self.handle_queue().unwrap_or_else(|err| {
-            error!("pmem: {err:?}");
+            error_rate_limited!("pmem: {err:?}");
             self.metrics.event_fails.inc();
         });
     }
@@ -373,7 +373,7 @@ impl VirtioDevice for Pmem {
             let len = config_space_bytes.len().min(data.len());
             data[..len].copy_from_slice(&config_space_bytes[..len]);
         } else {
-            error!("Failed to read config space");
+            error_rate_limited!("Failed to read config space");
             self.metrics.cfg_fails.inc();
         }
     }
@@ -404,7 +404,7 @@ impl VirtioDevice for Pmem {
 
     fn kick(&mut self) {
         if self.is_activated() {
-            info!("kick pmem {}.", self.config.id);
+            info_rate_limited!("kick pmem {}.", self.config.id);
             self.handle_queue();
         }
     }

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use bitvec::vec::BitVec;
-use log::info;
 use serde::{Deserialize, Serialize};
 use vm_memory::{
     Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryRegion, GuestUsize,
@@ -29,7 +28,7 @@ use crate::devices::virtio::queue::{
     DescriptorChain, FIRECRACKER_MAX_QUEUE_SIZE, InvalidAvailIdx, Queue, QueueError,
 };
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
-use crate::logger::{IncMetric, debug, error};
+use crate::logger::{IncMetric, debug_rate_limited, error_rate_limited, info_rate_limited};
 use crate::utils::{bytes_to_mib, mib_to_bytes, u64_to_usize, usize_to_u64};
 use crate::vstate::interrupts::InterruptError;
 use crate::vstate::memory::{
@@ -276,7 +275,7 @@ impl VirtioMem {
         resp_addr: GuestAddress,
         used_idx: u16,
     ) -> Result<(), VirtioMemError> {
-        debug!("virtio-mem: Response: {:?}", resp);
+        debug_rate_limited!("virtio-mem: Response: {:?}", resp);
         self.guest_memory()
             .write_obj(virtio_mem::virtio_mem_resp::from(resp), resp_addr)
             .map_err(|_| VirtioMemError::DescriptorWriteFailed)
@@ -354,7 +353,7 @@ impl VirtioMem {
         let response = match self.process_plug_request(range) {
             Err(err) => {
                 METRICS.plug_fails.inc();
-                error!("virtio-mem: Failed to plug range: {}", err);
+                error_rate_limited!("virtio-mem: Failed to plug range: {}", err);
                 Response::error()
             }
             Ok(_) => {
@@ -388,7 +387,7 @@ impl VirtioMem {
         let response = match self.process_unplug_request(range) {
             Err(err) => {
                 METRICS.unplug_fails.inc();
-                error!("virtio-mem: Failed to unplug range: {}", err);
+                error_rate_limited!("virtio-mem: Failed to unplug range: {}", err);
                 Response::error()
             }
             Ok(_) => {
@@ -415,7 +414,7 @@ impl VirtioMem {
         let response = match self.update_range(&range, false) {
             Err(err) => {
                 METRICS.unplug_all_fails.inc();
-                error!("virtio-mem: Failed to unplug all: {}", err);
+                error_rate_limited!("virtio-mem: Failed to unplug all: {}", err);
                 Response::error()
             }
             Ok(_) => {
@@ -437,7 +436,7 @@ impl VirtioMem {
         let response = match self.validate_range(range) {
             Err(err) => {
                 METRICS.state_fails.inc();
-                error!("virtio-mem: Failed to retrieve state of range: {}", err);
+                error_rate_limited!("virtio-mem: Failed to retrieve state of range: {}", err);
                 Response::error()
             }
             // the range was validated
@@ -451,7 +450,7 @@ impl VirtioMem {
             let index = desc.index;
 
             let (req, resp_addr, used_idx) = self.parse_request(&desc)?;
-            debug!("virtio-mem: Request: {:?}", req);
+            debug_rate_limited!("virtio-mem: Request: {:?}", req);
             // Handle request and write response
             match req {
                 Request::State(ref range) => self.handle_state_request(range, resp_addr, used_idx),
@@ -474,13 +473,13 @@ impl VirtioMem {
         METRICS.queue_event_count.inc();
         if let Err(err) = self.queue_events[MEM_QUEUE].read() {
             METRICS.queue_event_fails.inc();
-            error!("Failed to read mem queue event: {err}");
+            error_rate_limited!("Failed to read mem queue event: {err}");
             return;
         }
 
         if let Err(err) = self.process_mem_queue() {
             METRICS.queue_event_fails.inc();
-            error!("virtio-mem: Failed to process queue: {err}");
+            error_rate_limited!("virtio-mem: Failed to process queue: {err}");
         }
     }
 
@@ -548,7 +547,7 @@ impl VirtioMem {
                     // Failure to discard is not fatal and is not reported to the driver. It only
                     // gets logged.
                     METRICS.unplug_discard_fails.inc();
-                    error!("virtio-mem: Failed to discard memory range: {}", err);
+                    error_rate_limited!("virtio-mem: Failed to discard memory range: {}", err);
                 });
         }
 
@@ -579,14 +578,14 @@ impl VirtioMem {
         if self.config.usable_region_size < requested_size {
             self.config.usable_region_size =
                 requested_size.next_multiple_of(usize_to_u64(self.slot_size));
-            debug!(
+            debug_rate_limited!(
                 "virtio-mem: Updated usable size to {} bytes",
                 self.config.usable_region_size
             );
         }
 
         self.config.requested_size = requested_size;
-        debug!(
+        debug_rate_limited!(
             "virtio-mem: Updated requested size to {} bytes",
             requested_size
         );
@@ -642,7 +641,7 @@ impl VirtioDevice for VirtioMem {
             .get(offset..offset + data.len())
             .map(|s| data.copy_from_slice(s))
             .unwrap_or_else(|| {
-                error!(
+                error_rate_limited!(
                     "virtio-mem: Config read offset+length {offset}+{} out of bounds",
                     data.len()
                 )
@@ -650,7 +649,9 @@ impl VirtioDevice for VirtioMem {
     }
 
     fn write_config(&mut self, offset: u64, _data: &[u8]) {
-        error!("virtio-mem: Attempted write to read-only config space at offset {offset}");
+        error_rate_limited!(
+            "virtio-mem: Attempted write to read-only config space at offset {offset}"
+        );
     }
 
     fn is_activated(&self) -> bool {
@@ -663,7 +664,7 @@ impl VirtioDevice for VirtioMem {
         interrupt: Arc<dyn VirtioInterrupt>,
     ) -> Result<(), ActivateError> {
         if (self.acked_features & (1 << VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE)) == 0 {
-            error!(
+            error_rate_limited!(
                 "virtio-mem: VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE feature not acknowledged by guest"
             );
             METRICS.activate_fails.inc();
@@ -689,7 +690,7 @@ impl VirtioDevice for VirtioMem {
 
     fn kick(&mut self) {
         if self.is_activated() {
-            info!("kick mem {}.", self.id());
+            info_rate_limited!("kick mem {}.", self.id());
             self.process_virtio_queues();
         }
     }

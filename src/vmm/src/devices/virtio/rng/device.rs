@@ -6,7 +6,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use aws_lc_rs::rand;
-use log::info;
 use vm_memory::GuestMemoryError;
 use vmm_sys_util::eventfd::EventFd;
 
@@ -21,7 +20,7 @@ use crate::devices::virtio::iovec::IoVecBufferMut;
 use crate::devices::virtio::queue::{FIRECRACKER_MAX_QUEUE_SIZE, InvalidAvailIdx, Queue};
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
 use crate::impl_device_type;
-use crate::logger::{IncMetric, debug, error};
+use crate::logger::{IncMetric, debug_rate_limited, error_rate_limited};
 use crate::rate_limiter::{RateLimiter, TokenType};
 use crate::vstate::memory::GuestMemoryMmap;
 
@@ -150,7 +149,7 @@ impl Entropy {
             // time and we clear the `iovec` after we process the request.
             let bytes = match unsafe { self.buffer.load_descriptor_chain(mem, desc) } {
                 Ok(()) => {
-                    debug!(
+                    debug_rate_limited!(
                         "entropy: guest request for {} bytes of entropy",
                         self.buffer.len()
                     );
@@ -159,20 +158,20 @@ impl Entropy {
                     // If not enough budget is available, leave the request descriptor in the queue
                     // to handle once we do have budget.
                     if !self.rate_limit_request(u64::from(self.buffer.len())) {
-                        debug!("entropy: throttling entropy queue");
+                        debug_rate_limited!("entropy: throttling entropy queue");
                         METRICS.entropy_rate_limiter_throttled.inc();
                         self.queues[RNG_QUEUE].undo_pop();
                         break;
                     }
 
                     self.handle_one().unwrap_or_else(|err| {
-                        error!("entropy: {err}");
+                        error_rate_limited!("entropy: {err}");
                         METRICS.entropy_event_fails.inc();
                         0
                     })
                 }
                 Err(err) => {
-                    error!("entropy: Could not parse descriptor chain: {err}");
+                    error_rate_limited!("entropy: Could not parse descriptor chain: {err}");
                     METRICS.entropy_event_fails.inc();
                     0
                 }
@@ -184,7 +183,7 @@ impl Entropy {
                     METRICS.entropy_bytes.add(bytes.into());
                 }
                 Err(err) => {
-                    error!("entropy: Could not add used descriptor to queue: {err}");
+                    error_rate_limited!("entropy: Could not add used descriptor to queue: {err}");
                     Self::rate_limit_replenish_request(&mut self.rate_limiter, bytes.into());
                     METRICS.entropy_event_fails.inc();
                     // If we are not able to add a buffer to the used queue, something
@@ -198,7 +197,7 @@ impl Entropy {
 
         if used_any {
             self.signal_used_queue().unwrap_or_else(|err| {
-                error!("entropy: {err:?}");
+                error_rate_limited!("entropy: {err:?}");
                 METRICS.entropy_event_fails.inc()
             });
         }
@@ -208,7 +207,7 @@ impl Entropy {
 
     pub(crate) fn process_entropy_queue_event(&mut self) {
         if let Err(err) = self.queue_events[RNG_QUEUE].read() {
-            error!("Failed to read entropy queue event: {err}");
+            error_rate_limited!("Failed to read entropy queue event: {err}");
             METRICS.entropy_event_fails.inc();
         } else if !self.rate_limiter.is_blocked() {
             // We are not throttled, handle the entropy queue
@@ -226,7 +225,7 @@ impl Entropy {
                 self.process_entropy_queue().unwrap()
             }
             Err(err) => {
-                error!("entropy: Failed to handle rate-limiter event: {err:?}");
+                error_rate_limited!("entropy: Failed to handle rate-limiter event: {err:?}");
                 METRICS.entropy_event_fails.inc();
             }
         }

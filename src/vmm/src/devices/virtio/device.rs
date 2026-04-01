@@ -18,7 +18,7 @@ use super::transport::VirtioInterrupt;
 use crate::MutEventSubscriber;
 use crate::devices::virtio::AsAny;
 use crate::devices::virtio::generated::virtio_ids;
-use crate::logger::{error, info, warn};
+use crate::logger::{error_rate_limited, info_rate_limited, warn_rate_limited};
 use crate::vstate::memory::GuestMemoryMmap;
 
 /// State of an active VirtIO device
@@ -131,7 +131,7 @@ pub trait VirtioDevice: AsAny + MutEventSubscriber + Send {
             // Get the upper 32-bits of the features bitfield.
             1 => (avail_features >> 32) as u32,
             _ => {
-                warn!("Received request for unknown features page.");
+                warn_rate_limited!("Received request for unknown features page.");
                 0u32
             }
         }
@@ -143,7 +143,7 @@ pub trait VirtioDevice: AsAny + MutEventSubscriber + Send {
             0 => u64::from(value),
             1 => u64::from(value) << 32,
             _ => {
-                warn!("Cannot acknowledge unknown features page: {}", page);
+                warn_rate_limited!("Cannot acknowledge unknown features page: {}", page);
                 0u64
             }
         };
@@ -152,7 +152,7 @@ pub trait VirtioDevice: AsAny + MutEventSubscriber + Send {
         let avail_features = self.avail_features();
         let unrequested_features = v & !avail_features;
         if unrequested_features != 0 {
-            warn!("Received acknowledge request for unknown feature: {:#x}", v);
+            warn_rate_limited!("Received acknowledge request for unknown feature: {:#x}", v);
             // Don't count these features as acked.
             v &= !unrequested_features;
         }
@@ -191,10 +191,10 @@ pub trait VirtioDevice: AsAny + MutEventSubscriber + Send {
 
     /// Notify all queues by writing to the eventfds.
     fn notify_queue_events(&mut self) {
-        info!("[{:?}:{}] notifying queues", self.device_type(), self.id());
+        info_rate_limited!("[{:?}:{}] notifying queues", self.device_type(), self.id());
         for (i, eventfd) in self.queue_events().iter().enumerate() {
             if let Err(err) = eventfd.write(1) {
-                error!(
+                error_rate_limited!(
                     "[{:?}:{}] error notifying queue {}: {}",
                     self.device_type(),
                     self.id(),

@@ -4,7 +4,7 @@
 use std::io;
 
 use super::{MAX_PAGE_COMPACT_BUFFER, RemoveRegionError};
-use crate::logger::error;
+use crate::logger::error_rate_limited;
 use crate::utils::u64_to_usize;
 use crate::vstate::memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -36,7 +36,7 @@ pub(crate) fn compact_page_frame_numbers(v: &mut [u32]) -> Vec<(u32, u32)> {
         // Skip duplicate pages. This will ensure we only consider
         // distinct PFNs.
         if page_frame_number == v[pfn_index - 1] {
-            error!("Skipping duplicate PFN {}.", page_frame_number);
+            error_rate_limited!("Skipping duplicate PFN {}.", page_frame_number);
             continue;
         }
 

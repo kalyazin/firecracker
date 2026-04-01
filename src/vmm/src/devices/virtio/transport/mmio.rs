@@ -15,7 +15,7 @@ use super::{VirtioInterrupt, VirtioInterruptType};
 use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::device_status;
 use crate::devices::virtio::queue::Queue;
-use crate::logger::{IncMetric, METRICS, error, warn};
+use crate::logger::{IncMetric, METRICS, error_rate_limited, warn_rate_limited};
 use crate::utils::byte_order;
 use crate::vstate::bus::BusDevice;
 use crate::vstate::interrupts::InterruptError;
@@ -134,7 +134,7 @@ impl MmioTransport {
         ) {
             self.with_queue_mut(f);
         } else {
-            warn!(
+            warn_rate_limited!(
                 "update virtio queue in invalid state {:#x}",
                 self.device_status
             );
@@ -143,7 +143,7 @@ impl MmioTransport {
 
     fn reset(&mut self) {
         if self.locked_device().is_activated() {
-            warn!("reset device while it's still in active state");
+            warn_rate_limited!("reset device while it's still in active state");
         }
         self.features_select = 0;
         self.acked_features_select = 0;
@@ -194,7 +194,7 @@ impl MmioTransport {
                         // configuration change interrupt
                         let _ = self.interrupt.trigger(VirtioInterruptType::Config);
 
-                        error!("Failed to activate virtio device: {}", err)
+                        error_rate_limited!("Failed to activate virtio device: {}", err)
                     }
                 }
             }
@@ -225,9 +225,10 @@ impl MmioTransport {
                 }
             }
             _ => {
-                warn!(
+                warn_rate_limited!(
                     "invalid virtio driver status transition: {:#x} -> {:#x}",
-                    self.device_status, status
+                    self.device_status,
+                    status
                 );
             }
         }
@@ -281,7 +282,7 @@ impl BusDevice for MmioTransport {
                     0x70 => self.device_status,
                     0xfc => self.config_generation,
                     _ => {
-                        warn!("unknown virtio mmio register read: {:#x}", offset);
+                        warn_rate_limited!("unknown virtio mmio register read: {:#x}", offset);
                         return;
                     }
                 };
@@ -289,7 +290,7 @@ impl BusDevice for MmioTransport {
             }
             0x100..=0xfff => self.locked_device().read_config(offset - 0x100, data),
             _ => {
-                warn!(
+                warn_rate_limited!(
                     "invalid virtio mmio read: {base:#x}:{offset:#x}:{:#x}",
                     data.len()
                 );
@@ -321,7 +322,7 @@ impl BusDevice for MmioTransport {
                             self.locked_device()
                                 .ack_features_by_page(self.acked_features_select, v);
                         } else {
-                            warn!(
+                            warn_rate_limited!(
                                 "ack virtio features in invalid state {:#x}",
                                 self.device_status
                             );
@@ -344,7 +345,7 @@ impl BusDevice for MmioTransport {
                     0xa0 => self.update_queue_field(|q| lo(&mut q.used_ring_address, v)),
                     0xa4 => self.update_queue_field(|q| hi(&mut q.used_ring_address, v)),
                     _ => {
-                        warn!("unknown virtio mmio register write: {:#x}", offset);
+                        warn_rate_limited!("unknown virtio mmio register write: {:#x}", offset);
                     }
                 }
             }
@@ -355,11 +356,13 @@ impl BusDevice for MmioTransport {
                 ) {
                     self.locked_device().write_config(offset - 0x100, data)
                 } else {
-                    warn!("can not write to device config data area before driver is ready");
+                    warn_rate_limited!(
+                        "can not write to device config data area before driver is ready"
+                    );
                 }
             }
             _ => {
-                warn!(
+                warn_rate_limited!(
                     "invalid virtio mmio write: {base:#x}:{offset:#x}:{:#x}",
                     data.len()
                 );
@@ -469,7 +472,7 @@ impl IrqTrigger {
         self.irq_status.fetch_or(irq, Ordering::SeqCst);
 
         self.irq_evt.write(1).map_err(|err| {
-            error!("Failed to send irq to the guest: {:?}", err);
+            error_rate_limited!("Failed to send irq to the guest: {:?}", err);
             err
         })?;
 

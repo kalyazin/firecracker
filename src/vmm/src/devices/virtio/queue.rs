@@ -8,7 +8,7 @@
 use std::num::Wrapping;
 use std::sync::atomic::{Ordering, fence};
 
-use crate::logger::error;
+use crate::logger::error_rate_limited;
 use crate::utils::u64_to_usize;
 use crate::vstate::memory::{Bitmap, ByteValued, GuestAddress, GuestMemory};
 
@@ -564,7 +564,7 @@ impl Queue {
         len: u32,
     ) -> Result<(), QueueError> {
         if self.size <= desc_index {
-            error!(
+            error_rate_limited!(
                 "attempted to add out of bounds descriptor to used ring: {}",
                 desc_index
             );

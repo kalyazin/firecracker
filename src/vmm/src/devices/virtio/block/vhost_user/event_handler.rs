@@ -5,7 +5,7 @@ use vmm_sys_util::epoll::EventSet;
 
 use super::VhostUserBlock;
 use crate::devices::virtio::device::VirtioDevice;
-use crate::logger::{error, warn};
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl VhostUserBlock {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -16,20 +16,20 @@ impl VhostUserBlock {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to register activate event: {}", err);
+            error_rate_limited!("Failed to register activate event: {}", err);
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_evt.read() {
-            error!("Failed to consume block activate event: {:?}", err);
+            error_rate_limited!("Failed to consume block activate event: {:?}", err);
         }
         if let Err(err) = ops.remove(Events::with_data(
             &self.activate_evt,
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to un-register activate event: {}", err);
+            error_rate_limited!("Failed to un-register activate event: {}", err);
         }
     }
 }
@@ -42,9 +42,10 @@ impl MutEventSubscriber for VhostUserBlock {
         let supported_events = EventSet::IN;
 
         if !supported_events.contains(event_set) {
-            warn!(
+            warn_rate_limited!(
                 "Received unknown event: {:?} from source: {:?}",
-                event_set, source
+                event_set,
+                source
             );
             return;
         }
@@ -53,10 +54,10 @@ impl MutEventSubscriber for VhostUserBlock {
             if Self::PROCESS_ACTIVATE == source {
                 self.process_activate_event(ops)
             } else {
-                warn!("BlockVhost: Spurious event received: {:?}", source)
+                warn_rate_limited!("BlockVhost: Spurious event received: {:?}", source)
             }
         } else {
-            warn!(
+            warn_rate_limited!(
                 "BlockVhost: The device is not yet activated. Spurious event received: {:?}",
                 source
             );
@@ -69,7 +70,7 @@ impl MutEventSubscriber for VhostUserBlock {
         //  - on device activation (is-activated already true at this point),
         //  - on device restore from snapshot.
         if self.is_activated() {
-            warn!("Vhost-user block: unexpected init event");
+            warn_rate_limited!("Vhost-user block: unexpected init event");
         } else {
             self.register_activate_event(ops);
         }

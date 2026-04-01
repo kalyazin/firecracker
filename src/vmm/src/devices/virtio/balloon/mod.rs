@@ -10,7 +10,7 @@ pub mod persist;
 pub mod test_utils;
 mod util;
 
-use log::error;
+use crate::logger::error_rate_limited;
 
 pub use self::device::{Balloon, BalloonConfig, BalloonStats};
 use super::queue::{InvalidAvailIdx, QueueError};
@@ -120,6 +120,6 @@ pub(super) fn report_balloon_event_fail(err: BalloonError) {
     if let BalloonError::InvalidAvailIdx(err) = err {
         panic!("{}", err);
     }
-    error!("{:?}", err);
+    error_rate_limited!("{:?}", err);
     METRICS.event_fails.inc();
 }

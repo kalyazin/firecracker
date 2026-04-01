@@ -6,7 +6,7 @@ use vmm_sys_util::epoll::EventSet;
 
 use super::{Entropy, RNG_QUEUE};
 use crate::devices::virtio::device::VirtioDevice;
-use crate::logger::{error, warn};
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl Entropy {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -19,14 +19,14 @@ impl Entropy {
             Self::PROCESS_ENTROPY_QUEUE,
             EventSet::IN,
         )) {
-            error!("entropy: Failed to register queue event: {err}");
+            error_rate_limited!("entropy: Failed to register queue event: {err}");
         }
         if let Err(err) = ops.add(Events::with_data(
             self.rate_limiter(),
             Self::PROCESS_RATE_LIMITER,
             EventSet::IN,
         )) {
-            error!("entropy: Failed to register rate-limiter event: {err}");
+            error_rate_limited!("entropy: Failed to register rate-limiter event: {err}");
         }
     }
 
@@ -36,13 +36,13 @@ impl Entropy {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("entropy: Failed to register activate event: {err}");
+            error_rate_limited!("entropy: Failed to register activate event: {err}");
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_event().read() {
-            error!("entropy: Failed to consume activate event: {err}");
+            error_rate_limited!("entropy: Failed to consume activate event: {err}");
         }
 
         // Register runtime events
@@ -54,7 +54,7 @@ impl Entropy {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("entropy: Failed to un-register activate event: {err}");
+            error_rate_limited!("entropy: Failed to un-register activate event: {err}");
         }
     }
 }
@@ -77,12 +77,16 @@ impl MutEventSubscriber for Entropy {
         let source = events.data();
 
         if !event_set.contains(EventSet::IN) {
-            warn!("entropy: Received unknown event: {event_set:?} from source {source}");
+            warn_rate_limited!(
+                "entropy: Received unknown event: {event_set:?} from source {source}"
+            );
             return;
         }
 
         if !self.is_activated() {
-            warn!("entropy: The device is not activated yet. Spurious event received: {source}");
+            warn_rate_limited!(
+                "entropy: The device is not activated yet. Spurious event received: {source}"
+            );
             return;
         }
 
@@ -91,7 +95,7 @@ impl MutEventSubscriber for Entropy {
             Self::PROCESS_ENTROPY_QUEUE => self.process_entropy_queue_event(),
             Self::PROCESS_RATE_LIMITER => self.process_rate_limiter_event(),
             _ => {
-                warn!("entropy: Unknown event received: {source}");
+                warn_rate_limited!("entropy: Unknown event received: {source}");
             }
         }
     }

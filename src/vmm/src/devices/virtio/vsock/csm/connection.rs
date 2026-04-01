@@ -82,7 +82,6 @@ use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, warn};
 use vm_memory::GuestMemoryError;
 use vm_memory::io::{ReadVolatile, WriteVolatile};
 use vmm_sys_util::epoll::EventSet;
@@ -93,7 +92,9 @@ use super::txbuf::TxBuf;
 use super::{ConnState, PendingRx, PendingRxSet, VsockCsmError, defs};
 use crate::devices::virtio::vsock::metrics::METRICS;
 use crate::devices::virtio::vsock::packet::{VsockPacketHeader, VsockPacketRx, VsockPacketTx};
-use crate::logger::IncMetric;
+use crate::logger::{
+    IncMetric, debug_rate_limited, error_rate_limited, info_rate_limited, warn_rate_limited,
+};
 use crate::utils::wrap_usize_to_u32;
 
 /// Trait that vsock connection backends need to implement.
@@ -250,19 +251,23 @@ where
                 {
                     // This shouldn't actually happen (receiving EWOULDBLOCK after EPOLLIN), but
                     // apparently it does, so we need to handle it gracefully.
-                    warn!(
+                    warn_rate_limited!(
                         "vsock: unexpected EWOULDBLOCK while reading from backing stream: lp={}, \
                          pp={}, err={:?}",
-                        self.local_port, self.peer_port, err
+                        self.local_port,
+                        self.peer_port,
+                        err
                     );
                 }
                 Err(err) => {
                     // We are not expecting any other errors when reading from the underlying
                     // stream. If any show up, we'll immediately kill this connection.
                     METRICS.rx_read_fails.inc();
-                    error!(
+                    error_rate_limited!(
                         "vsock: error reading from backing stream: lp={}, pp={}, err={:?}",
-                        self.local_port, self.peer_port, err
+                        self.local_port,
+                        self.peer_port,
+                        err
                     );
                     pkt.hdr.set_op(uapi::VSOCK_OP_RST);
                     self.last_fwd_cnt_to_peer = self.fwd_cnt;
@@ -306,9 +311,10 @@ where
                 if pkt.hdr.op() == uapi::VSOCK_OP_RW =>
             {
                 if pkt.buf_size() == 0 {
-                    info!(
+                    info_rate_limited!(
                         "vsock: dropping empty data packet from guest (lp={}, pp={}",
-                        self.local_port, self.peer_port
+                        self.local_port,
+                        self.peer_port
                     );
                     return Ok(());
                 }
@@ -317,9 +323,11 @@ where
                 if let Err(err) = self.send_bytes(pkt) {
                     // If we can't write to the host stream, that's an unrecoverable error, so
                     // we'll terminate this connection.
-                    warn!(
+                    warn_rate_limited!(
                         "vsock: error writing to local stream (lp={}, pp={}): {:?}",
-                        self.local_port, self.peer_port, err
+                        self.local_port,
+                        self.peer_port,
+                        err
                     );
                     self.kill();
                     return Ok(());
@@ -389,9 +397,10 @@ where
             }
 
             _ => {
-                debug!(
+                debug_rate_limited!(
                     "vsock: dropping invalid TX pkt for connection: state={:?}, pkt.hdr={:?}",
-                    self.state, pkt.hdr
+                    self.state,
+                    pkt.hdr
                 );
             }
         };
@@ -458,7 +467,7 @@ where
             //
             if self.tx_buf.is_empty() {
                 METRICS.conn_event_fails.inc();
-                info!("vsock: connection received unexpected EPOLLOUT event");
+                info_rate_limited!("vsock: connection received unexpected EPOLLOUT event");
                 return;
             }
             let flushed = self
@@ -466,9 +475,11 @@ where
                 .flush_to(&mut self.stream)
                 .unwrap_or_else(|err| {
                     METRICS.tx_flush_fails.inc();
-                    warn!(
+                    warn_rate_limited!(
                         "vsock: error flushing TX buf for (lp={}, pp={}): {:?}",
-                        self.local_port, self.peer_port, err
+                        self.local_port,
+                        self.peer_port,
+                        err
                     );
                     match err {
                         VsockCsmError::TxBufFlush(inner)

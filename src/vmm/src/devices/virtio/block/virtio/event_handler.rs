@@ -6,7 +6,7 @@ use vmm_sys_util::epoll::EventSet;
 use super::io::FileEngine;
 use crate::devices::virtio::block::virtio::device::VirtioBlock;
 use crate::devices::virtio::device::VirtioDevice;
-use crate::logger::{error, warn};
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl VirtioBlock {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -20,14 +20,14 @@ impl VirtioBlock {
             Self::PROCESS_QUEUE,
             EventSet::IN,
         )) {
-            error!("Failed to register queue event: {}", err);
+            error_rate_limited!("Failed to register queue event: {}", err);
         }
         if let Err(err) = ops.add(Events::with_data(
             &self.rate_limiter,
             Self::PROCESS_RATE_LIMITER,
             EventSet::IN,
         )) {
-            error!("Failed to register ratelimiter event: {}", err);
+            error_rate_limited!("Failed to register ratelimiter event: {}", err);
         }
         if let FileEngine::Async(ref engine) = self.disk.file_engine
             && let Err(err) = ops.add(Events::with_data(
@@ -36,7 +36,7 @@ impl VirtioBlock {
                 EventSet::IN,
             ))
         {
-            error!("Failed to register IO engine completion event: {}", err);
+            error_rate_limited!("Failed to register IO engine completion event: {}", err);
         }
     }
 
@@ -46,13 +46,13 @@ impl VirtioBlock {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to register activate event: {}", err);
+            error_rate_limited!("Failed to register activate event: {}", err);
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_evt.read() {
-            error!("Failed to consume block activate event: {:?}", err);
+            error_rate_limited!("Failed to consume block activate event: {:?}", err);
         }
         self.register_runtime_events(ops);
         if let Err(err) = ops.remove(Events::with_data(
@@ -60,7 +60,7 @@ impl VirtioBlock {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("Failed to un-register activate event: {}", err);
+            error_rate_limited!("Failed to un-register activate event: {}", err);
         }
     }
 }
@@ -75,9 +75,10 @@ impl MutEventSubscriber for VirtioBlock {
         // to handle errors in devices.
         let supported_events = EventSet::IN;
         if !supported_events.contains(event_set) {
-            warn!(
+            warn_rate_limited!(
                 "Block: Received unknown event: {:?} from source: {:?}",
-                event_set, source
+                event_set,
+                source
             );
             return;
         }
@@ -88,10 +89,10 @@ impl MutEventSubscriber for VirtioBlock {
                 Self::PROCESS_QUEUE => self.process_queue_event(),
                 Self::PROCESS_RATE_LIMITER => self.process_rate_limiter_event(),
                 Self::PROCESS_ASYNC_COMPLETION => self.process_async_completion_event(),
-                _ => warn!("Block: Spurious event received: {:?}", source),
+                _ => warn_rate_limited!("Block: Spurious event received: {:?}", source),
             }
         } else {
-            warn!(
+            warn_rate_limited!(
                 "Block: The device is not yet activated. Spurious event received: {:?}",
                 source
             );

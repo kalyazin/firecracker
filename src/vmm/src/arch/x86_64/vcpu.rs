@@ -14,7 +14,6 @@ use kvm_bindings::{
     kvm_mp_state, kvm_regs, kvm_sregs, kvm_vcpu_events, kvm_xcrs, kvm_xsave, kvm_xsave2,
 };
 use kvm_ioctls::{VcpuExit, VcpuFd};
-use log::{error, warn};
 use serde::{Deserialize, Serialize};
 use vmm_sys_util::fam::{self, FamStruct};
 
@@ -24,7 +23,7 @@ use crate::arch::x86_64::interrupts;
 use crate::arch::x86_64::msr::{MsrError, create_boot_msr_entries};
 use crate::arch::x86_64::regs::{SetupFpuError, SetupRegistersError, SetupSpecialRegistersError};
 use crate::cpu_config::x86_64::{CpuConfiguration, cpuid};
-use crate::logger::{IncMetric, METRICS};
+use crate::logger::{IncMetric, METRICS, error_rate_limited, warn_rate_limited};
 use crate::vstate::bus::Bus;
 use crate::vstate::memory::GuestMemoryMmap;
 use crate::vstate::vcpu::{VcpuConfig, VcpuEmulation, VcpuError};
@@ -281,7 +280,7 @@ impl KvmVcpu {
         // https://elixir.bootlin.com/linux/v6.17.5/source/arch/x86/kvm/x86.c#L5736-L5737
         if let Err(err) = self.fd.kvmclock_ctrl() {
             METRICS.vcpu.kvmclock_ctrl_fails.inc();
-            warn!("KVM_KVMCLOCK_CTRL call failed {}", err);
+            warn_rate_limited!("KVM_KVMCLOCK_CTRL call failed {}", err);
         }
     }
 
@@ -403,7 +402,7 @@ impl KvmVcpu {
                 .flat_map(|msrs| msrs.as_mut_slice())
                 .filter(|msr| msr.index == MSR_IA32_TSC_DEADLINE && msr.data == 0)
                 .for_each(|msr| {
-                    warn!(
+                    warn_rate_limited!(
                         "MSR_IA32_TSC_DEADLINE is 0, replacing with {:#x}.",
                         tsc_value
                     );
@@ -430,9 +429,10 @@ impl KvmVcpu {
                     deferred_msrs
                         .push(*msr)
                         .inspect_err(|err| {
-                            error!(
+                            error_rate_limited!(
                                 "Failed to move MSR {} into later chunk: {:?}",
-                                msr.index, err
+                                msr.index,
+                                err
                             )
                         })
                         .is_err()
@@ -589,7 +589,9 @@ impl KvmVcpu {
             // v0.25 and newer snapshots without TSC will only work on
             // the same CPU model as the host on which they were taken.
             // TODO: Add negative test for this warning failure.
-            warn!("TSC freq not available. Snapshot cannot be loaded on a different CPU model.");
+            warn_rate_limited!(
+                "TSC freq not available. Snapshot cannot be loaded on a different CPU model."
+            );
             None
         });
         let cpuid = self.get_cpuid()?;
@@ -729,7 +731,10 @@ impl Peripherals {
                 if let Some(pio_bus) = &self.pio_bus {
                     let _metric = METRICS.vcpu.exit_io_in_agg.record_latency_metrics();
                     if let Err(err) = pio_bus.read(u64::from(addr), data) {
-                        warn!("vcpu: IO read @ {addr:#x}:{:#x} failed: {err}", data.len());
+                        warn_rate_limited!(
+                            "vcpu: IO read @ {addr:#x}:{:#x} failed: {err}",
+                            data.len()
+                        );
                     }
                     METRICS.vcpu.exit_io_in.inc();
                 }
@@ -739,7 +744,10 @@ impl Peripherals {
                 if let Some(pio_bus) = &self.pio_bus {
                     let _metric = METRICS.vcpu.exit_io_out_agg.record_latency_metrics();
                     if let Err(err) = pio_bus.write(u64::from(addr), data) {
-                        warn!("vcpu: IO write @ {addr:#x}:{:#x} failed: {err}", data.len());
+                        warn_rate_limited!(
+                            "vcpu: IO write @ {addr:#x}:{:#x} failed: {err}",
+                            data.len()
+                        );
                     }
                     METRICS.vcpu.exit_io_out.inc();
                 }
@@ -747,7 +755,7 @@ impl Peripherals {
             }
             unexpected_exit => {
                 METRICS.vcpu.failures.inc();
-                error!("Unexpected exit reason on vcpu run: {:?}", unexpected_exit);
+                error_rate_limited!("Unexpected exit reason on vcpu run: {:?}", unexpected_exit);
                 Err(VcpuError::UnhandledKvmExit(format!(
                     "{:?}",
                     unexpected_exit

@@ -13,7 +13,6 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 use libc::{EAGAIN, iovec};
-use log::{error, info};
 use vmm_sys_util::eventfd::EventFd;
 
 use super::NET_QUEUE_MAX_SIZE;
@@ -40,7 +39,7 @@ use crate::devices::{DeviceError, report_net_event_fail};
 use crate::dumbo::pdu::arp::ETH_IPV4_FRAME_LEN;
 use crate::dumbo::pdu::ethernet::{EthernetFrame, PAYLOAD_OFFSET};
 use crate::impl_device_type;
-use crate::logger::{IncMetric, METRICS};
+use crate::logger::{IncMetric, METRICS, error_rate_limited};
 use crate::mmds::data_store::Mmds;
 use crate::mmds::ns::MmdsNetworkStack;
 use crate::rate_limiter::{BucketUpdate, RateLimiter, TokenType};
@@ -471,12 +470,12 @@ impl Net {
                 // If guest uses dirty tricks to make us add more descriptors than
                 // we can hold, just stop processing.
                 if matches!(err, AddRxBufferError::Parsing(IoVecError::IovDequeOverflow)) {
-                    error!("net: Could not add an RX descriptor: {err}");
+                    error_rate_limited!("net: Could not add an RX descriptor: {err}");
                     queue.undo_pop();
                     break;
                 }
 
-                error!("net: Could not parse an RX descriptor: {err}");
+                error_rate_limited!("net: Could not parse an RX descriptor: {err}");
 
                 // Add this broken chain to the used_ring. It will be
                 // reported to the quest on the next `rx_buffer.finish_frame` call.
@@ -509,13 +508,13 @@ impl Net {
         let header_len = frame_iovec
             .read_volatile_at(&mut &mut *headers, 0, max_header_len)
             .map_err(|err| {
-                error!("Received malformed TX buffer: {:?}", err);
+                error_rate_limited!("Received malformed TX buffer: {:?}", err);
                 net_metrics.tx_malformed_frames.inc();
                 NetError::VnetHeaderMissing
             })?;
 
         let headers = frame_bytes_from_buf(&headers[..header_len]).inspect_err(|_| {
-            error!("VNET headers missing in TX frame");
+            error_rate_limited!("VNET headers missing in TX frame");
             net_metrics.tx_malformed_frames.inc();
         })?;
 
@@ -558,7 +557,7 @@ impl Net {
                 net_metrics.tx_count.inc();
             }
             Err(err) => {
-                error!("Failed to write to tap: {:?}", err);
+                error_rate_limited!("Failed to write to tap: {:?}", err);
                 net_metrics.tap_write_fails.inc();
             }
         };
@@ -647,7 +646,7 @@ impl Net {
                     match err.raw_os_error() {
                         Some(err) if err == EAGAIN => (),
                         _ => {
-                            error!("Failed to read tap: {:?}", err);
+                            error_rate_limited!("Failed to read tap: {:?}", err);
                             self.metrics.tap_read_fails.inc();
                             return Err(DeviceError::FailedReadTap);
                         }
@@ -658,7 +657,7 @@ impl Net {
                     return Err(DeviceError::InvalidAvailIdx(err));
                 }
                 Err(err) => {
-                    error!("Spurious error in network RX: {:?}", err);
+                    error_rate_limited!("Spurious error in network RX: {:?}", err);
                 }
             }
         }
@@ -708,7 +707,7 @@ impl Net {
 
             // We only handle frames that are up to MAX_BUFFER_SIZE
             if self.tx_buffer.len() as usize > MAX_BUFFER_SIZE {
-                error!("net: received too big frame from driver");
+                error_rate_limited!("net: received too big frame from driver");
                 self.metrics.tx_malformed_frames.inc();
                 tx_queue.add_used(head_index, 0)?;
                 continue;
@@ -837,7 +836,7 @@ impl Net {
 
         if let Err(err) = self.queue_evts[RX_INDEX].read() {
             // rate limiters present but with _very high_ allowed rate
-            error!("Failed to get rx queue event: {:?}", err);
+            error_rate_limited!("Failed to get rx queue event: {:?}", err);
             self.metrics.event_fails.inc();
             return;
         } else {
@@ -874,7 +873,7 @@ impl Net {
     pub fn process_tx_queue_event(&mut self) {
         self.metrics.tx_queue_event_count.inc();
         if let Err(err) = self.queue_evts[TX_INDEX].read() {
-            error!("Failed to get tx queue event: {:?}", err);
+            error_rate_limited!("Failed to get tx queue event: {:?}", err);
             self.metrics.event_fails.inc();
         } else if !self.tx_rate_limiter.is_blocked()
         // If the limiter is not blocked, continue transmitting bytes.
@@ -898,7 +897,7 @@ impl Net {
                     .unwrap_or_else(|err| report_net_event_fail(&self.metrics, err));
             }
             Err(err) => {
-                error!("Failed to get rx rate-limiter event: {:?}", err);
+                error_rate_limited!("Failed to get rx rate-limiter event: {:?}", err);
                 self.metrics.event_fails.inc();
             }
         }
@@ -915,7 +914,7 @@ impl Net {
                     .unwrap_or_else(|err| report_net_event_fail(&self.metrics, err));
             }
             Err(err) => {
-                error!("Failed to get tx rate-limiter event: {:?}", err);
+                error_rate_limited!("Failed to get tx rate-limiter event: {:?}", err);
                 self.metrics.event_fails.inc();
             }
         }
@@ -978,7 +977,7 @@ impl VirtioDevice for Net {
             let len = config_space_bytes.len().min(data.len());
             data[..len].copy_from_slice(&config_space_bytes[..len]);
         } else {
-            error!("Failed to read config space");
+            error_rate_limited!("Failed to read config space");
             self.metrics.cfg_fails.inc();
         }
     }
@@ -991,7 +990,7 @@ impl VirtioDevice for Net {
             .zip(end)
             .and_then(|(start, end)| config_space_bytes.get_mut(start..end))
         else {
-            error!("Failed to write config space");
+            error_rate_limited!("Failed to write config space");
             self.metrics.cfg_fails.inc();
             return;
         };

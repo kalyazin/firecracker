@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use event_manager::{EventOps, EventSet, Events, MutEventSubscriber};
-use log::{error, warn};
 
 use super::device::Pmem;
 use crate::devices::virtio::device::VirtioDevice;
+use crate::logger::{error_rate_limited, warn_rate_limited};
 
 impl Pmem {
     const PROCESS_ACTIVATE: u32 = 0;
@@ -17,7 +17,7 @@ impl Pmem {
             Self::PROCESS_PMEM_QUEUE,
             EventSet::IN,
         )) {
-            error!("pmem: Failed to register queue event: {err}");
+            error_rate_limited!("pmem: Failed to register queue event: {err}");
         }
     }
 
@@ -27,13 +27,13 @@ impl Pmem {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("pmem: Failed to register activate event: {err}");
+            error_rate_limited!("pmem: Failed to register activate event: {err}");
         }
     }
 
     fn process_activate_event(&self, ops: &mut EventOps) {
         if let Err(err) = self.activate_event.read() {
-            error!("pmem: Failed to consume activate event: {err}");
+            error_rate_limited!("pmem: Failed to consume activate event: {err}");
         }
 
         // Register runtime events
@@ -45,7 +45,7 @@ impl Pmem {
             Self::PROCESS_ACTIVATE,
             EventSet::IN,
         )) {
-            error!("pmem: Failed to unregister activate event: {err}");
+            error_rate_limited!("pmem: Failed to unregister activate event: {err}");
         }
     }
 }
@@ -64,12 +64,14 @@ impl MutEventSubscriber for Pmem {
         let source = events.data();
 
         if !event_set.contains(EventSet::IN) {
-            warn!("pmem: Received unknown event: {event_set:#?} from source {source}");
+            warn_rate_limited!("pmem: Received unknown event: {event_set:#?} from source {source}");
             return;
         }
 
         if !self.is_activated() {
-            warn!("pmem: The device is not activated yet. Spurious event received from {source}");
+            warn_rate_limited!(
+                "pmem: The device is not activated yet. Spurious event received from {source}"
+            );
             return;
         }
 
@@ -77,7 +79,7 @@ impl MutEventSubscriber for Pmem {
             Self::PROCESS_ACTIVATE => self.process_activate_event(ops),
             Self::PROCESS_PMEM_QUEUE => self.process_queue(),
             _ => {
-                warn!("pmem: Unknown event received: {source}");
+                warn_rate_limited!("pmem: Unknown event received: {source}");
             }
         }
     }

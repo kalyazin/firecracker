@@ -7,7 +7,6 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use log::error;
 use utils::time::{ClockType, get_time_us};
 use vhost::vhost_user::Frontend;
 use vhost::vhost_user::message::*;
@@ -28,7 +27,7 @@ use crate::devices::virtio::vhost_user_metrics::{
     VhostUserDeviceMetrics, VhostUserMetricsPerDevice,
 };
 use crate::impl_device_type;
-use crate::logger::{IncMetric, StoreMetric, log_dev_preview_warning};
+use crate::logger::{IncMetric, StoreMetric, error_rate_limited, log_dev_preview_warning};
 use crate::utils::u64_to_usize;
 use crate::vmm_config::drive::BlockDeviceConfig;
 use crate::vstate::memory::GuestMemoryMmap;
@@ -335,7 +334,7 @@ where
             let len = config_space_bytes.len().min(data.len());
             data[..len].copy_from_slice(&config_space_bytes[..len]);
         } else {
-            error!("Failed to read config space");
+            error_rate_limited!("Failed to read config space");
             self.metrics.cfg_fails.inc();
         }
     }

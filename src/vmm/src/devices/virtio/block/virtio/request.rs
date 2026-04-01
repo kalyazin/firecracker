@@ -17,7 +17,7 @@ pub use crate::devices::virtio::generated::virtio_blk::{
     VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use crate::devices::virtio::queue::DescriptorChain;
-use crate::logger::{IncMetric, error};
+use crate::logger::{IncMetric, error_rate_limited};
 use crate::rate_limiter::{RateLimiter, TokenType};
 use crate::vstate::memory::{ByteValued, Bytes, GuestAddress, GuestMemoryMmap};
 
@@ -113,15 +113,16 @@ impl PendingRequest {
                 err,
             } => {
                 block_metrics.invalid_reqs_count.inc();
-                error!(
+                error_rate_limited!(
                     "Failed to execute {:?} virtio block request: {:?}",
-                    self.r#type, err
+                    self.r#type,
+                    err
                 );
                 (*num_bytes_to_mem, u8::try_from(VIRTIO_BLK_S_IOERR).unwrap())
             }
             Status::Unsupported { op } => {
                 block_metrics.invalid_reqs_count.inc();
-                error!("Received unsupported virtio block request: {}", op);
+                error_rate_limited!("Received unsupported virtio block request: {}", op);
                 (0, u8::try_from(VIRTIO_BLK_S_UNSUPP).unwrap())
             }
         };
@@ -133,7 +134,7 @@ impl PendingRequest {
                 num_bytes_to_mem + 1
             })
             .unwrap_or_else(|err| {
-                error!("Failed to write virtio block status: {:?}", err);
+                error_rate_limited!("Failed to write virtio block status: {:?}", err);
                 // If we can't write the status, discard the virtio descriptor
                 0
             });
