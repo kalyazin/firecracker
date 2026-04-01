@@ -14,6 +14,15 @@ and this project adheres to
   support for Vsock Unix domain socket path overriding on snapshot restore. More
   information can be found in the
   [docs](docs/vsock.md/#unix-domain-socket-renaming).
+- [#5799](https://github.com/firecracker-microvm/firecracker/pull/5799): Add
+  per-callsite rate limiting for guest-triggered log paths via
+  `error_rate_limited!`, `warn_rate_limited!`, `info_rate_limited!`, and
+  `debug_rate_limited!` macros. Guest-triggerable callsites across balloon, net,
+  block, rng, vsock, pmem, PCI, MMIO, vCPU, and memory subsystems are migrated
+  to use rate-limited logging with a fixed budget of 10 messages per 5-second
+  refill period. When logging resumes after suppression, a warn-level summary
+  reports the count of suppressed messages. A new `rate_limited_log_count`
+  metric tracks the total number of suppressed messages.
 
 ### Changed
 
