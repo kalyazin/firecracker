@@ -56,11 +56,18 @@ def _cumulative_hint_count(vm):
     """Sum `balloon.free_page_hint_count` across every metric line emitted
     since VM boot.
 
-    FC's `SharedIncMetric` resets the counter on every flush (manual via
-    `FlushMetrics` action, or automatic per `HostStatsSamplingInterval`).
-    `flush_metrics()` only returns the *latest* line, so we'd miss any
-    counter increments captured by automatic flushes between our manual
-    ones. Summing across the whole metric history gives the true total.
+    FC's `SharedIncMetric` (src/vmm/src/logger/metrics.rs) stores a
+    (current, old) atomic pair: `Serialize` emits `current - old` then
+    sets `old = current`. Each metric line carries the delta since the
+    previous line, not an absolute counter — so summing across all lines
+    gives the cumulative total since boot.
+
+    FC has no periodic auto-flush; `METRICS.write()` is only called on the
+    explicit `FlushMetrics` action, terminating signal handlers, and VMM
+    shutdown. In this test, the number of metric lines therefore equals
+    the number of times we called `vm.flush_metrics()` — but summing is
+    still cheap defense against an unexpected flush (e.g. a signal during
+    teardown).
     """
     return sum(
         line.get("balloon", {}).get("free_page_hint_count", 0)
